@@ -1,5 +1,4 @@
 import json
-import subprocess
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -7,8 +6,9 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from harness.config import HarnessConfig, load_config, save_config
+from harness.config import EnvSettings, HarnessConfig, load_config, save_config
 from harness.db import Database, now_iso
+from harness.llm import LLMAdapter, get_adapter
 from harness.schemas.task import TaskStatus
 from harness.services.contract_service import build_contract
 from harness.services.decision_service import (
@@ -17,22 +17,26 @@ from harness.services.decision_service import (
     generate_stub_decisions,
     list_decisions,
 )
-from harness.services.task_service import create_task, get_active_task_or_exit
-from harness.state_machine import (
-    WrongStateError,
-    assert_command_allowed,
-    transition,
+from harness.services.implementation_service import implement as svc_implement
+from harness.services.task_service import (
+    create_task,
+    get_active_task_or_exit,
+    run_interrogate,
 )
+from harness.services.validation_service import check_compliance, run_validate
+from harness.state_machine import WrongStateError, assert_command_allowed
 
 app = typer.Typer(no_args_is_help=True, help="Architect-Driven Coding Harness")
 memory_app = typer.Typer(no_args_is_help=True, help="Memory commands")
 app.add_typer(memory_app, name="memory")
 
 
-def _get_ctx() -> tuple[Path, HarnessConfig, Database]:
+def _get_ctx() -> tuple[Path, HarnessConfig, Database, LLMAdapter | None]:
     harness_dir, config = load_config()
     db = Database(harness_dir / "harness.db")
-    return harness_dir, config, db
+    env = EnvSettings()
+    llm = get_adapter(config, env)
+    return harness_dir, config, db, llm
 
 
 def _abort(msg: str) -> None:
@@ -79,7 +83,7 @@ def init(
 @app.command()
 def start(requirement: str) -> None:
     """Create a new task from a requirement string."""
-    _, _, db = _get_ctx()
+    _, _, db, llm = _get_ctx()
     task = create_task(requirement, db)
     typer.echo(f"Task {task['id']} created.")
     typer.echo(f"Title: {task['title']}")
@@ -94,7 +98,7 @@ def start(requirement: str) -> None:
 @app.command()
 def status() -> None:
     """Show current task state and decision coverage."""
-    _, _, db = _get_ctx()
+    _, _, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
 
     typer.echo(f"Task {task['id']}: {task['title']} [{task['status']}]")
@@ -129,16 +133,23 @@ def status() -> None:
 
 @app.command()
 def interrogate() -> None:
-    """Generate decision map for the active task (stub: 3 decisions)."""
-    _, _, db = _get_ctx()
+    """Generate decision map for the active task."""
+    _, _, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("interrogate", TaskStatus(task["status"]))
     except WrongStateError as e:
         _abort(str(e))
 
-    typer.echo("[STUB] Interrogating requirement...")
-    decisions = generate_stub_decisions(task, db)
+    if llm is None:
+        typer.echo("[STUB] No API key — using stub decisions.")
+        decisions = generate_stub_decisions(task, db)
+    else:
+        typer.echo("Interrogating requirement...")
+        try:
+            decisions = run_interrogate(task, llm, db)
+        except RuntimeError as e:
+            _abort(str(e))
 
     typer.echo(f"\nDecision Map ({len(decisions)} decisions generated):\n")
     typer.echo(f"{'ID':<6} {'Category':<25} {'Status':<10} Question")
@@ -156,7 +167,7 @@ def interrogate() -> None:
 @app.command()
 def decisions() -> None:
     """List all decisions for the active task."""
-    _, _, db = _get_ctx()
+    _, _, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
     rows = list_decisions(task["id"], db)
 
@@ -196,7 +207,7 @@ def answer(
     answer_text: Annotated[Optional[str], typer.Argument()] = None,
 ) -> None:
     """Record an answer for a decision."""
-    _, _, db = _get_ctx()
+    _, _, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("answer", TaskStatus(task["status"]))
@@ -231,7 +242,7 @@ def approve(
     decision_ids: Annotated[list[str], typer.Argument()],
 ) -> None:
     """Approve one or more answered decisions."""
-    _, _, db = _get_ctx()
+    _, _, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("approve", TaskStatus(task["status"]))
@@ -256,16 +267,22 @@ def approve(
 
 @app.command()
 def contract() -> None:
-    """Build implementation contract from approved decisions (stub)."""
-    _, _, db = _get_ctx()
+    """Build implementation contract from approved decisions."""
+    _, _, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("contract", TaskStatus(task["status"]))
     except WrongStateError as e:
         _abort(str(e))
 
-    typer.echo("[STUB] Building contract...")
-    c = build_contract(task, db)
+    if llm is None:
+        typer.echo("[STUB] No API key — using stub contract.")
+    else:
+        typer.echo("Building contract...")
+    try:
+        c = build_contract(task, db, llm)
+    except RuntimeError as e:
+        _abort(str(e))
     allowed = json.loads(c["allowed_files_json"])
     forbidden = json.loads(c["forbidden_json"])
 
@@ -284,8 +301,8 @@ def contract() -> None:
 
 @app.command()
 def implement(contract_id: str) -> None:
-    """Generate patch file from contract (stub)."""
-    harness_dir, _, db = _get_ctx()
+    """Generate patch file from contract."""
+    harness_dir, _, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("implement", TaskStatus(task["status"]))
@@ -296,42 +313,21 @@ def implement(contract_id: str) -> None:
     if c is None:
         _abort(f"Contract {contract_id} not found.")
 
-    allowed = json.loads(c["allowed_files_json"])
-    stub_diff = _make_stub_diff(contract_id.upper(), allowed)
+    if llm is None:
+        typer.echo("[STUB] No API key — generating placeholder patch.")
+    else:
+        typer.echo("Generating patch...")
 
-    patches_dir = harness_dir / "patches"
-    patches_dir.mkdir(exist_ok=True)
-    patch_file = patches_dir / f"{contract_id.upper()}.diff"
-    patch_file.write_text(stub_diff)
+    try:
+        patch = svc_implement(dict(task), dict(c), db, harness_dir, llm)
+    except RuntimeError as e:
+        _abort(str(e))
 
-    patch_id = db.new_patch_id()
-    db.create_patch({
-        "id": patch_id,
-        "contract_id": contract_id.upper(),
-        "diff_text": stub_diff,
-        "status": "generated",
-        "created_at": now_iso(),
-    })
-
-    transition(task, TaskStatus.IMPLEMENTING, db)
-
-    typer.echo(f"[STUB] Patch saved: {patch_file}")
-    typer.echo(f"Lines added: {stub_diff.count(chr(10))}")
+    patch_file = harness_dir / "patches" / f"{contract_id.upper()}.diff"
+    added = sum(1 for l in patch["diff_text"].splitlines() if l.startswith("+") and not l.startswith("+++"))
+    typer.echo(f"Patch saved: {patch_file}")
+    typer.echo(f"Lines added: {added}")
     typer.echo(f"\nNext: harness check {contract_id.upper()}")
-
-
-def _make_stub_diff(contract_id: str, allowed_files: list[str]) -> str:
-    lines = []
-    for path in allowed_files:
-        lines += [
-            f"--- a/{path}",
-            f"+++ b/{path}",
-            "@@ -0,0 +1,3 @@",
-            f"+# [STUB] Generated by harness implement",
-            f"+# Contract: {contract_id}",
-            f"+# Placeholder implementation",
-        ]
-    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -340,8 +336,8 @@ def _make_stub_diff(contract_id: str, allowed_files: list[str]) -> str:
 
 @app.command()
 def check(contract_id: str) -> None:
-    """Run compliance check on patch (stub: always passes)."""
-    _, _, db = _get_ctx()
+    """Run compliance check on patch."""
+    _, _, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("check", TaskStatus(task["status"]))
@@ -356,27 +352,29 @@ def check(contract_id: str) -> None:
     if patch is None:
         _abort(f"No patch found for {contract_id}. Run 'harness implement {contract_id}' first.")
 
-    typer.echo("[STUB] Checking compliance...")
-    transition(task, TaskStatus.CHECKING_COMPLIANCE, db)
+    typer.echo("Checking compliance...")
+    report = check_compliance(dict(task), dict(c), dict(patch), db, llm)
 
-    report_id = db.new_compliance_report_id()
-    db.create_compliance_report({
-        "id": report_id,
-        "contract_id": contract_id.upper(),
-        "patch_id": patch["id"],
-        "passed": 1,
-        "violations_json": "[]",
-        "summary": "[STUB] Compliance PASS — no violations found.",
-        "created_at": now_iso(),
-    })
+    status_str = "PASS" if report.passed else "FAIL"
+    typer.echo(f"\nCompliance: {status_str}")
+    typer.echo(f"Rule-based: {'PASS' if report.rule_based_passed else 'FAIL'}")
+    if report.llm_review:
+        typer.echo(f"LLM review: {report.llm_review[:120]}")
 
-    checking = {"id": task["id"], "status": TaskStatus.CHECKING_COMPLIANCE}
-    transition(checking, TaskStatus.VALIDATING, db)
+    if report.violations:
+        typer.echo("\nViolations:")
+        for v in report.violations:
+            line = f"  {v.severity.upper():<8} {v.type:<20} {v.description}"
+            if v.line_ref:
+                line += f"  ({v.line_ref})"
+            typer.echo(line)
+    else:
+        typer.echo("No violations found.")
 
-    typer.echo("Compliance: PASS")
-    typer.echo("Rule-based: PASS  |  LLM review: [STUB] PASS")
-    typer.echo("No violations found.")
-    typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
+    if report.passed:
+        typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
+    else:
+        typer.echo("\nTask returned to IMPLEMENTING. Fix and re-run 'harness implement'.")
 
 
 # ---------------------------------------------------------------------------
@@ -386,44 +384,20 @@ def check(contract_id: str) -> None:
 @app.command()
 def validate() -> None:
     """Run validation commands from config (empty list = auto-pass)."""
-    _, config, db = _get_ctx()
+    _, config, db, llm = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("validate", TaskStatus(task["status"]))
     except WrongStateError as e:
         _abort(str(e))
 
-    current = TaskStatus(task["status"])
-    if current == TaskStatus.CHECKING_COMPLIANCE:
-        transition(task, TaskStatus.VALIDATING, db)
-        task = db.get_active_task()
-
-    if not config.validate_commands:
-        typer.echo("No validate_commands configured — auto-PASS.")
-        validating = {"id": task["id"], "status": TaskStatus.VALIDATING}
-        transition(validating, TaskStatus.DONE, db)
-        typer.echo("Task → DONE")
-        typer.echo("Next: harness remember")
-        return
-
-    all_passed = True
-    for cmd in config.validate_commands:
-        typer.echo(f"Running: {cmd}")
-        result = subprocess.run(cmd, shell=True)
-        if result.returncode != 0:
-            typer.echo(f"  FAIL (exit {result.returncode})")
-            all_passed = False
-        else:
-            typer.echo("  PASS")
-
-    validating = {"id": task["id"], "status": TaskStatus.VALIDATING}
-    if all_passed:
-        transition(validating, TaskStatus.DONE, db)
-        typer.echo("\nAll validation commands passed.")
+    typer.echo("Running validation...")
+    passed = run_validate(dict(task), config.validate_commands, db)
+    if passed:
+        typer.echo("All validation commands passed. Task → DONE")
         typer.echo("Next: harness remember")
     else:
-        transition(validating, TaskStatus.IMPLEMENTING, db)
-        typer.echo("\nValidation FAILED. Task returned to IMPLEMENTING.")
+        typer.echo("Validation FAILED. Task returned to IMPLEMENTING.")
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +407,7 @@ def validate() -> None:
 @app.command()
 def remember() -> None:
     """Extract and save lessons from the completed task (stub)."""
-    _, config, db = _get_ctx()
+    _, config, db, llm = _get_ctx()
     task = db.get_latest_task()
     if task is None:
         _abort("No task found. Run 'harness start' first.")
@@ -480,7 +454,7 @@ def memory_list(
     scope_filter: Annotated[Optional[str], typer.Option("--scope")] = None,
 ) -> None:
     """List stored memories."""
-    _, _, db = _get_ctx()
+    _, _, db, llm = _get_ctx()
     rows = db.list_memory(type_filter, scope_filter)
 
     if not rows:
