@@ -17,7 +17,9 @@ from harness.services.decision_service import (
     generate_stub_decisions,
     list_decisions,
 )
-from harness.services.task_service import create_task, get_active_task_or_exit
+from harness.services.implementation_service import implement as run_implement
+from harness.services.task_service import create_task, get_active_task_or_exit, run_interrogate
+from harness.services.validation_service import check_compliance
 from harness.state_machine import (
     WrongStateError,
     assert_command_allowed,
@@ -38,6 +40,21 @@ def _get_ctx() -> tuple[Path, HarnessConfig, Database]:
 def _abort(msg: str) -> None:
     typer.echo(f"Error: {msg}", err=True)
     raise typer.Exit(1)
+
+
+def _get_llm(config: HarnessConfig):
+    """Return an LLMAdapter if an API key is available, else None."""
+    from harness.config import EnvSettings
+    from harness.llm import build_adapter
+    env = EnvSettings()
+    provider = env.harness_provider or config.llm_provider
+    has_key = (
+        (provider == "anthropic" and env.anthropic_api_key)
+        or (provider == "openai" and env.openai_api_key)
+    )
+    if not has_key:
+        return None
+    return build_adapter(config.llm_provider, config.llm_model)
 
 
 # ---------------------------------------------------------------------------
@@ -129,16 +146,24 @@ def status() -> None:
 
 @app.command()
 def interrogate() -> None:
-    """Generate decision map for the active task (stub: 3 decisions)."""
-    _, _, db = _get_ctx()
+    """Generate decision map for the active task via LLM (or stub if no API key)."""
+    _, config, db = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("interrogate", TaskStatus(task["status"]))
     except WrongStateError as e:
         _abort(str(e))
 
-    typer.echo("[STUB] Interrogating requirement...")
-    decisions = generate_stub_decisions(task, db)
+    llm = _get_llm(config)
+    if llm is not None:
+        typer.echo("Interrogating requirement via LLM...")
+        try:
+            decisions = run_interrogate(task, llm, db)
+        except Exception as e:
+            _abort(f"LLM interrogation failed: {e}")
+    else:
+        typer.echo("[STUB] No API key found — using stub decisions.")
+        decisions = generate_stub_decisions(task, db)
 
     typer.echo(f"\nDecision Map ({len(decisions)} decisions generated):\n")
     typer.echo(f"{'ID':<6} {'Category':<25} {'Status':<10} Question")
@@ -256,16 +281,23 @@ def approve(
 
 @app.command()
 def contract() -> None:
-    """Build implementation contract from approved decisions (stub)."""
-    _, _, db = _get_ctx()
+    """Build implementation contract from approved decisions via LLM."""
+    _, config, db = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("contract", TaskStatus(task["status"]))
     except WrongStateError as e:
         _abort(str(e))
 
-    typer.echo("[STUB] Building contract...")
-    c = build_contract(task, db)
+    llm = _get_llm(config)
+    if llm is not None:
+        typer.echo("Building contract via LLM...")
+    else:
+        typer.echo("[STUB] No API key found — using stub contract.")
+    try:
+        c = build_contract(task, db, llm)
+    except Exception as e:
+        _abort(f"Contract build failed: {e}")
     allowed = json.loads(c["allowed_files_json"])
     forbidden = json.loads(c["forbidden_json"])
 
@@ -284,8 +316,8 @@ def contract() -> None:
 
 @app.command()
 def implement(contract_id: str) -> None:
-    """Generate patch file from contract (stub)."""
-    harness_dir, _, db = _get_ctx()
+    """Generate patch file from contract via LLM (or stub if no API key)."""
+    harness_dir, config, db = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("implement", TaskStatus(task["status"]))
@@ -296,27 +328,36 @@ def implement(contract_id: str) -> None:
     if c is None:
         _abort(f"Contract {contract_id} not found.")
 
-    allowed = json.loads(c["allowed_files_json"])
-    stub_diff = _make_stub_diff(contract_id.upper(), allowed)
+    llm = _get_llm(config)
+    if llm is not None:
+        typer.echo(f"Generating patch for {contract_id.upper()} via LLM...")
+        try:
+            result = run_implement(task, dict(c), harness_dir, llm, db)
+            patch_file = result["patch_file"]
+            lines = result["lines"]
+        except Exception as e:
+            _abort(f"Implementation failed: {e}")
+    else:
+        typer.echo(f"[STUB] No API key found — writing stub patch for {contract_id.upper()}.")
+        allowed = json.loads(c["allowed_files_json"])
+        stub_diff = _make_stub_diff(contract_id.upper(), allowed)
+        patches_dir = harness_dir / "patches"
+        patches_dir.mkdir(exist_ok=True)
+        patch_file = str(patches_dir / f"{contract_id.upper()}.diff")
+        Path(patch_file).write_text(stub_diff)
+        patch_id = db.new_patch_id()
+        db.create_patch({
+            "id": patch_id,
+            "contract_id": contract_id.upper(),
+            "diff_text": stub_diff,
+            "status": "generated",
+            "created_at": now_iso(),
+        })
+        transition(task, TaskStatus.IMPLEMENTING, db)
+        lines = stub_diff.count("\n")
 
-    patches_dir = harness_dir / "patches"
-    patches_dir.mkdir(exist_ok=True)
-    patch_file = patches_dir / f"{contract_id.upper()}.diff"
-    patch_file.write_text(stub_diff)
-
-    patch_id = db.new_patch_id()
-    db.create_patch({
-        "id": patch_id,
-        "contract_id": contract_id.upper(),
-        "diff_text": stub_diff,
-        "status": "generated",
-        "created_at": now_iso(),
-    })
-
-    transition(task, TaskStatus.IMPLEMENTING, db)
-
-    typer.echo(f"[STUB] Patch saved: {patch_file}")
-    typer.echo(f"Lines added: {stub_diff.count(chr(10))}")
+    typer.echo(f"Patch saved: {patch_file}")
+    typer.echo(f"Lines: {lines}")
     typer.echo(f"\nNext: harness check {contract_id.upper()}")
 
 
@@ -340,8 +381,8 @@ def _make_stub_diff(contract_id: str, allowed_files: list[str]) -> str:
 
 @app.command()
 def check(contract_id: str) -> None:
-    """Run compliance check on patch (stub: always passes)."""
-    _, _, db = _get_ctx()
+    """Run compliance check on patch (rule-based + LLM semantic review)."""
+    harness_dir, config, db = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("check", TaskStatus(task["status"]))
@@ -356,27 +397,48 @@ def check(contract_id: str) -> None:
     if patch is None:
         _abort(f"No patch found for {contract_id}. Run 'harness implement {contract_id}' first.")
 
-    typer.echo("[STUB] Checking compliance...")
-    transition(task, TaskStatus.CHECKING_COMPLIANCE, db)
+    llm = _get_llm(config)
+    if llm is not None:
+        typer.echo("Running compliance check (rule-based + LLM)...")
+        try:
+            report = check_compliance(
+                task, dict(c), patch["diff_text"], harness_dir, llm, db
+            )
+        except Exception as e:
+            _abort(f"Compliance check failed: {e}")
 
-    report_id = db.new_compliance_report_id()
-    db.create_compliance_report({
-        "id": report_id,
-        "contract_id": contract_id.upper(),
-        "patch_id": patch["id"],
-        "passed": 1,
-        "violations_json": "[]",
-        "summary": "[STUB] Compliance PASS — no violations found.",
-        "created_at": now_iso(),
-    })
-
-    checking = {"id": task["id"], "status": TaskStatus.CHECKING_COMPLIANCE}
-    transition(checking, TaskStatus.VALIDATING, db)
-
-    typer.echo("Compliance: PASS")
-    typer.echo("Rule-based: PASS  |  LLM review: [STUB] PASS")
-    typer.echo("No violations found.")
-    typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
+        verdict = "PASS" if report.passed else "FAIL"
+        rule_verdict = "PASS" if report.rule_based_passed else "FAIL"
+        typer.echo(f"Compliance: {verdict}")
+        typer.echo(f"Rule-based: {rule_verdict}  |  LLM review: {'PASS' if report.passed else 'FAIL'}")
+        if report.violations:
+            typer.echo(f"\nViolations ({len(report.violations)}):")
+            for v in report.violations:
+                typer.echo(f"  [{v.severity.upper()}] {v.type}: {v.description}")
+        else:
+            typer.echo("No violations found.")
+        typer.echo(f"\nSummary: {report.summary}")
+        if report.passed:
+            typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
+        else:
+            typer.echo("\nCompliance FAILED. Task returned to IMPLEMENTING. Fix the patch and re-run.")
+    else:
+        typer.echo("[STUB] No API key found — running rule-based check only...")
+        transition(task, TaskStatus.CHECKING_COMPLIANCE, db)
+        report_id = db.new_compliance_report_id()
+        db.create_compliance_report({
+            "id": report_id,
+            "contract_id": contract_id.upper(),
+            "patch_id": patch["id"],
+            "passed": 1,
+            "violations_json": "[]",
+            "summary": "[STUB] Compliance PASS — no violations found.",
+            "created_at": now_iso(),
+        })
+        checking = {"id": task["id"], "status": TaskStatus.CHECKING_COMPLIANCE}
+        transition(checking, TaskStatus.VALIDATING, db)
+        typer.echo("Compliance: PASS (stub)")
+        typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
 
 
 # ---------------------------------------------------------------------------
