@@ -57,7 +57,7 @@ cli.py           ← all services + rich
 
 ## Current Phase
 
-**Phase 1 — Workflow Engine (no LLM)**
+**Phase 2 — LLM Integration**
 
 ## Build Progress
 
@@ -65,16 +65,16 @@ cli.py           ← all services + rich
 - [x] harness/schemas/task.py
 - [x] harness/schemas/decision.py
 - [x] harness/schemas/contract.py
-- [ ] harness/schemas/compliance.py
-- [ ] harness/config.py
-- [ ] harness/db.py
-- [ ] harness/state_machine.py
-- [ ] harness/services/__init__.py
-- [ ] harness/services/task_service.py
-- [ ] harness/services/decision_service.py
-- [ ] harness/services/contract_service.py
-- [ ] harness/cli.py (stub version — no LLM calls)
-- [ ] **PHASE 1 GATE** ← run verification gate before Phase 2
+- [x] harness/schemas/compliance.py
+- [x] harness/config.py
+- [x] harness/db.py
+- [x] harness/state_machine.py
+- [x] harness/services/__init__.py
+- [x] harness/services/task_service.py
+- [x] harness/services/decision_service.py
+- [x] harness/services/contract_service.py
+- [x] harness/cli.py (stub version — no LLM calls)
+- [x] **PHASE 1 GATE** ← run verification gate before Phase 2
 
 ### Phase 2 — LLM Integration
 - [ ] harness/llm.py
