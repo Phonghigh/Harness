@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq '{\"continue\": true, \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"updatedInput\": {\"command\": (\". /home/fionn/Documents/Dev/Harness/.venv/bin/activate && \" + .tool_input.command)}}}'",
+            "command": "jq '{\"continue\": true, \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"updatedInput\": {\"command\": (\"[ -f .venv/bin/activate ] && . .venv/bin/activate 2>/dev/null; \" + .tool_input.command)}}}'",
             "statusMessage": "Activating venv..."
           }
         ]
