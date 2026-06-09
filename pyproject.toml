@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "architect-harness"
+version = "0.1.0"
+description = "Decision-first AI coding system"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "anthropic>=0.28.0",
+    "openai>=1.35.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+harness = "harness.cli:app"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "ruff>=0.4.0", "mypy>=1.10.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["harness"]
+
+[tool.hatch.build]
+include = [
+    "harness/**/*.py",
+    "harness/prompts/*.md",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

@@ -1,0 +1,77 @@
+[
+  {
+    "id": "product_behavior",
+    "name": "Product Behavior",
+    "description": "What should the system do from the user's perspective? Covers use cases, user flows, and expected outcomes. Example: 'Should the user be notified on failure?'"
+  },
+  {
+    "id": "data_model",
+    "name": "Data Model",
+    "description": "What data entities are involved, what fields do they have, and how are they related? Example: 'What fields does the Product entity need?'"
+  },
+  {
+    "id": "api_contract",
+    "name": "API / Interface Contract",
+    "description": "What is the exact shape of inputs and outputs? Covers request/response schemas, return types, and interface signatures. Example: 'Should the endpoint return the entity or a DTO?'"
+  },
+  {
+    "id": "business_rules",
+    "name": "Business Rules",
+    "description": "What domain constraints and validation rules must be enforced? Example: 'Can price be negative? What is the max order quantity?'"
+  },
+  {
+    "id": "architecture_pattern",
+    "name": "Architecture Pattern",
+    "description": "Which structural pattern should be used? Covers layering, separation of concerns, and design patterns. Example: 'Should this use Repository pattern or direct DB access?'"
+  },
+  {
+    "id": "state_lifecycle",
+    "name": "State / Lifecycle",
+    "description": "What states can an entity or process be in, and how does it transition between them? Example: 'What statuses can an Order have?'"
+  },
+  {
+    "id": "validation",
+    "name": "Validation",
+    "description": "Where and how should input validation happen? Covers validation layers, error messages, and edge cases. Example: 'Should validation happen at the controller or service layer?'"
+  },
+  {
+    "id": "error_handling",
+    "name": "Error Handling",
+    "description": "How should errors be caught, logged, and surfaced to callers? Example: 'What HTTP status code for a not-found resource?'"
+  },
+  {
+    "id": "security_permission",
+    "name": "Security / Permission",
+    "description": "Who can access what? Covers authentication, authorization, and data visibility rules. Example: 'Should this endpoint require JWT? Which roles can delete?'"
+  },
+  {
+    "id": "persistence_transaction",
+    "name": "Persistence / Transaction",
+    "description": "How is data stored and what consistency guarantees are required? Example: 'Should this operation be wrapped in a transaction?'"
+  },
+  {
+    "id": "performance_concurrency",
+    "name": "Performance / Concurrency",
+    "description": "What are the performance constraints and how should concurrent access be handled? Example: 'Should this use optimistic or pessimistic locking?'"
+  },
+  {
+    "id": "observability",
+    "name": "Observability",
+    "description": "What needs to be logged, traced, or monitored? Example: 'Should we emit a metric when an order is created?'"
+  },
+  {
+    "id": "testing",
+    "name": "Testing",
+    "description": "What test coverage is required and at which level? Example: 'Should this have unit tests, integration tests, or both?'"
+  },
+  {
+    "id": "migration_compatibility",
+    "name": "Migration / Compatibility",
+    "description": "How do we handle existing data and backward compatibility? Example: 'Does this schema change require a data migration?'"
+  },
+  {
+    "id": "implementation_scope",
+    "name": "Implementation Scope",
+    "description": "What is explicitly in and out of scope for this task? Example: 'Should we implement only login, or also registration and logout?'"
+  }
+]

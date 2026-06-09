@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -c ' *)",
+      "Bash(python3 -m pip --version)",
+      "Read(//home/fionn/.local/**)",
+      "Read(//usr/local/lib/**)",
+      "Bash(python3 -c \"import sys; print\\('\\\\n'.join\\(sys.path\\)\\)\")",
+      "Bash(python3 -c \"import pydantic\")",
+      "Read(//usr/lib/python3.14/site-packages/**)",
+      "Bash(curl -sS https://bootstrap.pypa.io/get-pip.py)",
+      "Bash(python3 - --user -q)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/python --version)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -c \"import pydantic; print\\('pydantic', pydantic.VERSION\\)\")",
+      "Bash(.venv/bin/python -c \"from harness.schemas.decision import DECISION_CATEGORIES; print\\('schemas OK, categories:', len\\(DECISION_CATEGORIES\\)\\)\")"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq '{\"continue\": true, \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"updatedInput\": {\"command\": (\". /home/fionn/Documents/Dev/Harness/.venv/bin/activate && \" + .tool_input.command)}}}'",
+            "statusMessage": "Activating venv..."
+          }
+        ]
+      }
+    ]
+  }
+}
