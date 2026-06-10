@@ -22,6 +22,20 @@ Ask → Decide → Contract → Syntax → Check → Remember
 9. All LLM output parsed via `model_validate_json()` — never bare `json.loads()`
 10. Services never import from `cli.py` — only CLI imports services
 
+## Karpathy Coding Guidelines
+
+Four principles from Andrej Karpathy's LLM coding observations — enforced on every task.
+
+**1. Think Before Coding** — Surface assumptions before writing any code. If a requirement is ambiguous, name the ambiguity and ask. Never pick silently between interpretations.
+
+**2. Simplicity First** — Minimum code that solves the stated problem. No speculative features, no abstractions for single-use code, no error handling for impossible scenarios. If it could be 50 lines, don't write 200.
+
+**3. Surgical Changes** — Every changed line must trace directly to the user's request. Don't improve adjacent code, don't reformat, don't refactor what isn't broken. Remove only the orphans YOUR changes created.
+
+**4. Goal-Driven Execution** — Define a verifiable success criterion before starting. For each phase item the criterion is the Phase Verification Gate command — the item is not done until that command passes.
+
+> Invoke with `/karpathy-guidelines` or `Skill(karpathy-guidelines)` for the full reference with examples.
+
 ## Architecture (build strictly in this order)
 
 ```
