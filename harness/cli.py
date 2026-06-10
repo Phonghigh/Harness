@@ -28,7 +28,9 @@ from harness.state_machine import (
 
 app = typer.Typer(no_args_is_help=True, help="Architect-Driven Coding Harness")
 memory_app = typer.Typer(no_args_is_help=True, help="Memory commands")
+config_app = typer.Typer(no_args_is_help=True, help="Config commands")
 app.add_typer(memory_app, name="memory")
+app.add_typer(config_app, name="config")
 
 
 def _get_ctx() -> tuple[Path, HarnessConfig, Database]:
@@ -118,7 +120,16 @@ def status() -> None:
 
     decisions = db.get_decisions(task["id"])
     if decisions:
-        typer.echo(f"\nDecisions ({len(decisions)} total):")
+        total = len(decisions)
+        answered = sum(1 for d in decisions if d["status"] in ("answered", "approved"))
+        approved = sum(1 for d in decisions if d["status"] == "approved")
+        coverage_pct = int(answered / total * 100) if total else 0
+        approved_pct = int(approved / total * 100) if total else 0
+        typer.echo(
+            f"\nDecisions: {total} total | "
+            f"Coverage: {answered}/{total} answered ({coverage_pct}%) | "
+            f"Approved: {approved}/{total} ({approved_pct}%)"
+        )
         for d in decisions:
             mark = {"pending": "✗", "answered": "△", "approved": "✓"}.get(d["status"], "?")
             typer.echo(f"  {mark} {d['id']}  {d['category']:<25} ({d['status']})")
@@ -217,16 +228,26 @@ def decisions() -> None:
 
 @app.command()
 def answer(
-    decision_id: str,
+    decision_id: Annotated[Optional[str], typer.Argument()] = None,
     answer_text: Annotated[Optional[str], typer.Argument()] = None,
 ) -> None:
-    """Record an answer for a decision."""
+    """Record an answer for a decision. Omit arguments to enter interactive mode."""
     _, _, db = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("answer", TaskStatus(task["status"]))
     except WrongStateError as e:
         _abort(str(e))
+
+    if decision_id is None:
+        pending = [d for d in db.get_decisions(task["id"]) if d["status"] == "pending"]
+        if not pending:
+            typer.echo("No pending decisions.")
+            return
+        typer.echo("Pending decisions:")
+        for d in pending:
+            typer.echo(f"  {d['id']}  {d['category']:<25}  {d['question']}")
+        decision_id = typer.prompt("\nDecision ID to answer").strip().upper()
 
     dec = db.get_decision(decision_id.upper())
     if dec is None:
@@ -253,15 +274,26 @@ def answer(
 
 @app.command()
 def approve(
-    decision_ids: Annotated[list[str], typer.Argument()],
+    decision_ids: Annotated[Optional[list[str]], typer.Argument()] = None,
+    all_flag: Annotated[bool, typer.Option("--all", help="Approve all answered decisions")] = False,
 ) -> None:
-    """Approve one or more answered decisions."""
+    """Approve one or more answered decisions, or --all to approve every answered decision."""
     _, _, db = _get_ctx()
     task = get_active_task_or_exit(db)
     try:
         assert_command_allowed("approve", TaskStatus(task["status"]))
     except WrongStateError as e:
         _abort(str(e))
+
+    if all_flag:
+        decision_ids = [
+            d["id"] for d in db.get_decisions(task["id"]) if d["status"] == "answered"
+        ]
+        if not decision_ids:
+            typer.echo("No answered decisions to approve.")
+            return
+    elif not decision_ids:
+        _abort("Provide decision IDs or use --all.")
 
     all_approved, conflicts = approve_decisions(decision_ids, task, db)
     for did in decision_ids:
@@ -562,6 +594,91 @@ def remember() -> None:
 
 
 # ---------------------------------------------------------------------------
+# harness report
+# ---------------------------------------------------------------------------
+
+@app.command()
+def report(
+    output: Annotated[Optional[str], typer.Option("--output", "-o", help="Output file path (default: .harness/reports/<task-id>.md)")] = None,
+) -> None:
+    """Export a markdown report of the current (or last) task."""
+    harness_dir, config, db = _get_ctx()
+    task = db.get_latest_task()
+    if task is None:
+        _abort("No task found. Run 'harness start' first.")
+    task = dict(task)
+
+    decisions = db.get_decisions(task["id"])
+    contract = db.get_latest_contract(task["id"])
+    patch = db.get_latest_patch(contract["id"]) if contract else None
+    compliance = db.get_latest_compliance_report(contract["id"]) if contract else None
+
+    lines: list[str] = []
+    lines.append(f"# Harness Report: {task['title']}\n")
+    lines.append(f"**Task ID:** {task['id']}  ")
+    lines.append(f"**Status:** {task['status']}  ")
+    lines.append(f"**Created:** {task['created_at']}\n")
+    lines.append("---\n")
+
+    lines.append("## Requirement\n")
+    lines.append(f"{task['raw_requirement']}\n")
+
+    lines.append("## Decisions\n")
+    if decisions:
+        total = len(decisions)
+        answered = sum(1 for d in decisions if d["status"] in ("answered", "approved"))
+        approved = sum(1 for d in decisions if d["status"] == "approved")
+        lines.append(f"Coverage: {answered}/{total} answered, {approved}/{total} approved\n")
+        lines.append("| ID | Category | Status | Question | Answer |")
+        lines.append("|----|----------|--------|----------|--------|")
+        for d in decisions:
+            ans = (d["selected_answer"] or "").replace("|", "\\|")
+            q = d["question"].replace("|", "\\|")
+            lines.append(f"| {d['id']} | {d['category']} | {d['status']} | {q} | {ans} |")
+        lines.append("")
+    else:
+        lines.append("No decisions recorded.\n")
+
+    if contract:
+        lines.append("## Contract\n")
+        lines.append(f"**Contract ID:** {contract['id']}  ")
+        lines.append(f"**Scope:** {contract['scope']}\n")
+        allowed = json.loads(contract["allowed_files_json"])
+        lines.append(f"**Allowed files:** {', '.join(allowed)}\n")
+        forbidden = json.loads(contract["forbidden_json"])
+        lines.append(f"**Forbidden patterns:** {', '.join(forbidden)}\n")
+
+    if patch:
+        lines.append("## Patch\n")
+        lines.append(f"```diff\n{patch['diff_text']}\n```\n")
+
+    if compliance:
+        violations = json.loads(compliance["violations_json"])
+        verdict = "PASS" if compliance["passed"] else "FAIL"
+        lines.append("## Compliance\n")
+        lines.append(f"**Result:** {verdict}  ")
+        lines.append(f"**Summary:** {compliance['summary']}\n")
+        if violations:
+            lines.append("| Severity | Type | Description |")
+            lines.append("|----------|------|-------------|")
+            for v in violations:
+                lines.append(f"| {v.get('severity','').upper()} | {v.get('type','')} | {v.get('description','')} |")
+            lines.append("")
+
+    md_content = "\n".join(lines)
+
+    if output:
+        out_path = Path(output)
+    else:
+        reports_dir = harness_dir / "reports"
+        reports_dir.mkdir(exist_ok=True)
+        out_path = reports_dir / f"{task['id']}.md"
+
+    out_path.write_text(md_content)
+    typer.echo(f"Report written to {out_path}")
+
+
+# ---------------------------------------------------------------------------
 # harness memory list
 # ---------------------------------------------------------------------------
 
@@ -626,3 +743,26 @@ def memory_delete(memory_id: str) -> None:
         typer.echo(f"Memory {memory_id.upper()} deleted.")
     else:
         _abort(f"Memory {memory_id.upper()} not found.")
+
+
+# ---------------------------------------------------------------------------
+# harness config set
+# ---------------------------------------------------------------------------
+
+_SETTABLE_FIELDS = {"llm_provider", "llm_model", "project_name"}
+
+
+@config_app.command("set")
+def config_set(key: str, value: str) -> None:
+    """Set a config value (llm_provider, llm_model, project_name, validate_commands)."""
+    harness_dir, config, _ = _get_ctx()
+
+    if key == "validate_commands":
+        config.validate_commands = [v.strip() for v in value.split(",") if v.strip()]
+    elif key in _SETTABLE_FIELDS:
+        config = config.model_copy(update={key: value})
+    else:
+        _abort(f"Unknown config key '{key}'. Settable: {', '.join(sorted(_SETTABLE_FIELDS | {'validate_commands'}))}")
+
+    save_config(harness_dir, config)
+    typer.echo(f"Config updated: {key} = {value}")
