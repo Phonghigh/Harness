@@ -253,6 +253,13 @@ class Database:
         with self.connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM compliance_reports").fetchone()[0]
 
+    def get_latest_compliance_report(self, contract_id: str) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM compliance_reports WHERE contract_id = ? ORDER BY created_at DESC LIMIT 1",
+                (contract_id,),
+            ).fetchone()
+
     # --- Memory ---
 
     def upsert_memory(self, entry: dict) -> None:

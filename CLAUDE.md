@@ -57,7 +57,7 @@ cli.py           ← all services + rich
 
 ## Current Phase
 
-**Phase 2 — LLM Integration**
+**Phase 4 — UX Polish**
 
 ## Build Progress
 
@@ -94,15 +94,15 @@ cli.py           ← all services + rich
 - [x] Memory injection into interrogator prompt
 - [x] Conflict detection on `harness approve`
 - [x] `harness memory search` and `harness memory delete` commands
-- [ ] **PHASE 3 GATE**
+- [x] **PHASE 3 GATE**
 
 ### Phase 4 — UX Polish
-- [ ] Decision coverage score in `harness status`
-- [ ] Interactive `harness answer` (no arg = prompt)
-- [ ] `harness approve --all`
-- [ ] `harness report` (markdown export)
-- [ ] `harness config set <key> <value>`
-- [ ] **PHASE 4 GATE**
+- [x] Decision coverage score in `harness status`
+- [x] Interactive `harness answer` (no arg = prompt)
+- [x] `harness approve --all`
+- [x] `harness report` (markdown export)
+- [x] `harness config set <key> <value>`
+- [x] **PHASE 4 GATE**
 
 ## Phase Verification Gates
 
