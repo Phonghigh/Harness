@@ -77,23 +77,23 @@ cli.py           ← all services + rich
 - [x] **PHASE 1 GATE** ← run verification gate before Phase 2
 
 ### Phase 2 — LLM Integration
-- [ ] harness/llm.py
-- [ ] harness/prompts/interrogator.md
-- [ ] harness/prompts/contract_builder.md
-- [ ] harness/prompts/syntax_executor.md
-- [ ] harness/prompts/compliance_checker.md
-- [ ] harness/prompts/memory_writer.md
-- [ ] Wire LLM into task_service (run_interrogate)
-- [ ] Wire LLM into contract_service (build_contract)
-- [ ] harness/services/implementation_service.py
-- [ ] harness/services/validation_service.py
-- [ ] **PHASE 2 GATE** ← run verification gate before Phase 3
+- [x] harness/llm.py
+- [x] harness/prompts/interrogator.md
+- [x] harness/prompts/contract_builder.md
+- [x] harness/prompts/syntax_executor.md
+- [x] harness/prompts/compliance_checker.md
+- [x] harness/prompts/memory_writer.md
+- [x] Wire LLM into task_service (run_interrogate)
+- [x] Wire LLM into contract_service (build_contract)
+- [x] harness/services/implementation_service.py
+- [x] harness/services/validation_service.py
+- [x] **PHASE 2 GATE** ← run verification gate before Phase 3
 
 ### Phase 3 — Memory & Reuse
-- [ ] harness/services/memory_service.py
-- [ ] Memory injection into interrogator prompt
-- [ ] Conflict detection on `harness approve`
-- [ ] `harness memory search` and `harness memory delete` commands
+- [x] harness/services/memory_service.py
+- [x] Memory injection into interrogator prompt
+- [x] Conflict detection on `harness approve`
+- [x] `harness memory search` and `harness memory delete` commands
 - [ ] **PHASE 3 GATE**
 
 ### Phase 4 — UX Polish
