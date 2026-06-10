@@ -25,3 +25,5 @@ class ComplianceReport(BaseModel):
     summary: str
     rule_based_passed: bool
     llm_review: str | None = None
+    error_count: int = 0
+    warning_count: int = 0

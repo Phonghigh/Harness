@@ -57,7 +57,7 @@ cli.py           ← all services + rich
 
 ## Current Phase
 
-**Phase 4 — UX Polish**
+**Phase 7 — Evaluation & History (complete)**
 
 ## Build Progress
 
@@ -103,6 +103,33 @@ cli.py           ← all services + rich
 - [x] `harness report` (markdown export)
 - [x] `harness config set <key> <value>`
 - [x] **PHASE 4 GATE**
+
+### Phase 5 — MCP Server
+- [x] harness/server.py (FastMCP, 11 tools, 4 resources)
+- [x] harness/prompts/conflict_detector.md
+- [x] `harness serve` command in cli.py
+- [x] pyproject.toml: mcp dependency + harness-mcp entry point
+- [x] **PHASE 5 GATE**
+
+### Phase 6 — Advanced Compliance + Traceability
+- [x] harness/schemas/contract.py: `decision_ids` field
+- [x] harness/schemas/compliance.py: `error_count`, `warning_count` fields
+- [x] harness/db.py: `decision_ids_json` column + migration
+- [x] harness/services/conflict_service.py (LLM + fast fallback)
+- [x] harness/services/decision_service.py: uses conflict_service
+- [x] harness/services/contract_service.py: populates decision_ids
+- [x] harness/services/validation_service.py: populates error/warning counts
+- [x] harness/cli.py: inline diff preview + colored violation output
+- [x] **PHASE 6 GATE**
+
+### Phase 7 — Evaluation & History
+- [x] harness/schemas/evaluation.py
+- [x] harness/services/evaluation_service.py
+- [x] harness/db.py: evaluations table, list_tasks, memory tracking columns
+- [x] harness/services/memory_service.py: source_task_id + applied_count tracking
+- [x] harness/cli.py: `harness history`, `harness eval`, `memory list` Applied column
+- [x] tests/ (56 tests — state_machine, decision, contract, validation, memory)
+- [x] **PHASE 7 GATE**
 
 ## Phase Verification Gates
 

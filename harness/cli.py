@@ -395,6 +395,29 @@ def implement(contract_id: str) -> None:
 
     typer.echo(f"Patch saved: {patch_file}")
     typer.echo(f"Lines: {lines}")
+    typer.echo("")
+    # Inline diff preview (first 40 added/removed lines)
+    try:
+        diff_content = Path(patch_file).read_text()
+        diff_lines = diff_content.split("\n")
+        shown = 0
+        typer.echo("─" * 60)
+        for line in diff_lines:
+            if shown >= 40:
+                remaining = len(diff_lines) - diff_lines.index(line)
+                typer.echo(f"  ... ({remaining} more lines — see {patch_file})")
+                break
+            if line.startswith("+") and not line.startswith("+++"):
+                typer.echo(typer.style(line, fg=typer.colors.GREEN))
+                shown += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                typer.echo(typer.style(line, fg=typer.colors.RED))
+                shown += 1
+            else:
+                typer.echo(line)
+        typer.echo("─" * 60)
+    except Exception:
+        pass
     typer.echo(f"\nNext: harness check {contract_id.upper()}")
 
 
@@ -448,10 +471,12 @@ def check(contract_id: str) -> None:
         rule_verdict = "PASS" if report.rule_based_passed else "FAIL"
         typer.echo(f"Compliance: {verdict}")
         typer.echo(f"Rule-based: {rule_verdict}  |  LLM review: {'PASS' if report.passed else 'FAIL'}")
+        typer.echo(f"Errors: {report.error_count}  |  Warnings: {report.warning_count}")
         if report.violations:
             typer.echo(f"\nViolations ({len(report.violations)}):")
             for v in report.violations:
-                typer.echo(f"  [{v.severity.upper()}] {v.type}: {v.description}")
+                color = typer.colors.RED if v.severity == "error" else typer.colors.YELLOW
+                typer.echo(typer.style(f"  [{v.severity.upper()}] {v.type}: {v.description}", fg=color))
         else:
             typer.echo("No violations found.")
         typer.echo(f"\nSummary: {report.summary}")
@@ -585,6 +610,9 @@ def remember() -> None:
                 "scope": config.project_name,
                 "key": key,
                 "value_json": json.dumps(value),
+                "source_task_id": task["id"],
+                "applied_count": 0,
+                "last_applied_at": None,
                 "created_at": now,
                 "updated_at": now,
             })
@@ -701,10 +729,12 @@ def memory_list(
     table.add_column("Scope")
     table.add_column("Key", style="bold")
     table.add_column("Value")
+    table.add_column("Applied", justify="right")
     for row in rows:
         value = json.loads(row["value_json"])
         lesson = value.get("lesson", str(value)) if isinstance(value, dict) else str(value)
-        table.add_row(row["id"], row["type"], row["scope"], row["key"], lesson[:55])
+        applied = str(row["applied_count"]) if "applied_count" in row.keys() else "0"
+        table.add_row(row["id"], row["type"], row["scope"], row["key"], lesson[:55], applied)
     rprint(table)
 
 
@@ -766,3 +796,111 @@ def config_set(key: str, value: str) -> None:
 
     save_config(harness_dir, config)
     typer.echo(f"Config updated: {key} = {value}")
+
+
+# ---------------------------------------------------------------------------
+# harness serve
+# ---------------------------------------------------------------------------
+
+@app.command()
+def serve() -> None:
+    """Start the Harness MCP server (stdio transport for Claude Code / Cursor integration)."""
+    from harness.server import run as run_server
+    typer.echo("Starting Harness MCP server (stdio)...", err=True)
+    run_server()
+
+
+# ---------------------------------------------------------------------------
+# harness history
+# ---------------------------------------------------------------------------
+
+@app.command()
+def history(
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max tasks to show")] = 20,
+) -> None:
+    """Browse task history (all tasks, newest first)."""
+    _, _, db = _get_ctx()
+    tasks = db.list_tasks(limit=limit)
+
+    if not tasks:
+        typer.echo("No tasks found.")
+        return
+
+    table = Table(title=f"Task History (last {limit})")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title")
+    table.add_column("Status", style="bold")
+    table.add_column("Decisions")
+    table.add_column("Created")
+
+    for t in tasks:
+        decisions = db.get_decisions(t["id"])
+        total = len(decisions)
+        approved = sum(1 for d in decisions if d["status"] == "approved")
+        status_color = "green" if t["status"] == "DONE" else "yellow"
+        created = t["created_at"][:10] if t["created_at"] else "?"
+        table.add_row(
+            t["id"],
+            t["title"][:45] + ("…" if len(t["title"]) > 45 else ""),
+            f"[{status_color}]{t['status']}[/{status_color}]",
+            f"{approved}/{total}",
+            created,
+        )
+    rprint(table)
+
+
+# ---------------------------------------------------------------------------
+# harness eval
+# ---------------------------------------------------------------------------
+
+@app.command()
+def eval(
+    task_id: Annotated[Optional[str], typer.Argument(help="Task ID (default: latest)")] = None,
+) -> None:
+    """Show or compute evaluation metrics for a task."""
+    _, _, db = _get_ctx()
+
+    if task_id is None:
+        task_row = db.get_latest_task()
+        if task_row is None:
+            _abort("No task found.")
+        task_id = task_row["id"]
+
+    task_row = db.get_task(task_id.upper())
+    if task_row is None:
+        _abort(f"Task {task_id} not found.")
+    task = dict(task_row)
+
+    # Check if evaluation already exists
+    existing = db.get_evaluation(task["id"])
+    if existing is None:
+        # Compute on demand
+        if task["status"] != "DONE":
+            typer.echo(f"Task {task['id']} is not DONE (status: {task['status']}). Partial metrics only.")
+        from harness.services.evaluation_service import compute_task_evaluation
+        ev = compute_task_evaluation(task, db)
+    else:
+        from harness.schemas.evaluation import TaskEvaluation
+        ev = TaskEvaluation.model_validate_json(existing["metrics_json"])
+
+    typer.echo(f"\nEvaluation: {ev.id}  Task: {ev.task_id}")
+    typer.echo("─" * 60)
+
+    dc = ev.decision_coverage
+    typer.echo(f"Decision Coverage:  {dc.answered}/{dc.total_decisions} answered ({dc.coverage_pct}%)")
+    typer.echo(f"Approval Rate:      {dc.approved}/{dc.total_decisions} approved ({dc.approval_pct}%)")
+    typer.echo(f"Categories covered: {', '.join(dc.categories_covered) or '(none)'}")
+    if dc.categories_missing:
+        typer.echo(f"Categories missing: {', '.join(dc.categories_missing)}")
+
+    typer.echo("")
+    co = ev.compliance
+    first_try = "YES" if co.passed_on_first_try else "NO"
+    typer.echo(f"Compliance checks:  {co.total_checks} total, passed first try: {first_try}")
+    typer.echo(f"Retries:            {co.total_retries}")
+    typer.echo(f"Final violations:   {co.final_error_violations} errors, {co.final_warning_violations} warnings")
+
+    typer.echo("")
+    typer.echo(f"Memories written:   {ev.memory.memories_written}")
+    typer.echo(f"Cycle time:         {ev.cycle_time_seconds:.0f}s ({ev.cycle_time_seconds/60:.1f}m)")
+    typer.echo(f"Contract:           {ev.contract_id or '(none)'}")
