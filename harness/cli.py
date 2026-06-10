@@ -56,7 +56,7 @@ def _get_llm(config: HarnessConfig):
     )
     if not has_key:
         return None
-    return build_adapter(config.llm_provider, config.llm_model)
+    return build_adapter(provider, config.llm_model)
 
 
 # ---------------------------------------------------------------------------
@@ -468,34 +468,38 @@ def check(contract_id: str) -> None:
         from harness.services.validation_service import _rule_based_check
         typer.echo("No API key — running rule-based check only (no LLM semantic review).")
         transition(task, TaskStatus.CHECKING_COMPLIANCE, db)
-        rule_violations = _rule_based_check(dict(c), patch["diff_text"])
-        rule_passed = not any(v.severity == "error" for v in rule_violations)
-        verdict = "PASS" if rule_passed else "FAIL"
-        summary = f"Rule-based {verdict}. {len(rule_violations)} violation(s). No LLM review."
-        report_id = db.new_compliance_report_id()
-        db.create_compliance_report({
-            "id": report_id,
-            "contract_id": contract_id.upper(),
-            "patch_id": patch["id"],
-            "passed": int(rule_passed),
-            "violations_json": json.dumps([v.model_dump() for v in rule_violations]),
-            "summary": summary,
-            "created_at": now_iso(),
-        })
         checking = {"id": task["id"], "status": TaskStatus.CHECKING_COMPLIANCE}
-        if rule_passed:
-            transition(checking, TaskStatus.VALIDATING, db)
-            typer.echo(f"Compliance: PASS (rule-based only)")
-            if rule_violations:
+        try:
+            rule_violations = _rule_based_check(dict(c), patch["diff_text"])
+            rule_passed = not any(v.severity == "error" for v in rule_violations)
+            verdict = "PASS" if rule_passed else "FAIL"
+            summary = f"Rule-based {verdict}. {len(rule_violations)} violation(s). No LLM review."
+            report_id = db.new_compliance_report_id()
+            db.create_compliance_report({
+                "id": report_id,
+                "contract_id": contract_id.upper(),
+                "patch_id": patch["id"],
+                "passed": int(rule_passed),
+                "violations_json": json.dumps([v.model_dump() for v in rule_violations]),
+                "summary": summary,
+                "created_at": now_iso(),
+            })
+            if rule_passed:
+                transition(checking, TaskStatus.VALIDATING, db)
+                typer.echo(f"Compliance: PASS (rule-based only)")
+                if rule_violations:
+                    for v in rule_violations:
+                        typer.echo(f"  [{v.severity.upper()}] {v.type}: {v.description}")
+                typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
+            else:
+                transition(checking, TaskStatus.IMPLEMENTING, db)
+                typer.echo("Compliance: FAIL")
                 for v in rule_violations:
                     typer.echo(f"  [{v.severity.upper()}] {v.type}: {v.description}")
-            typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
-        else:
+                typer.echo("\nCompliance FAILED. Task returned to IMPLEMENTING.")
+        except Exception:
             transition(checking, TaskStatus.IMPLEMENTING, db)
-            typer.echo("Compliance: FAIL")
-            for v in rule_violations:
-                typer.echo(f"  [{v.severity.upper()}] {v.type}: {v.description}")
-            typer.echo("\nCompliance FAILED. Task returned to IMPLEMENTING.")
+            raise
 
 
 # ---------------------------------------------------------------------------

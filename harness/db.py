@@ -306,7 +306,9 @@ class Database:
         return "T" + uuid.uuid4().hex[:6].upper()
 
     def new_decision_id(self, task_id: str) -> str:
-        return f"D{self.count_decisions(task_id) + 1:03d}"
+        with self.connect() as conn:
+            n = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+        return f"D{n + 1:03d}"
 
     def new_contract_id(self) -> str:
         return f"C{self.count_contracts() + 1:03d}"
