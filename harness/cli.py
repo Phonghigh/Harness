@@ -114,7 +114,12 @@ def start(requirement: str) -> None:
 def status() -> None:
     """Show current task state and decision coverage."""
     _, _, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = db.get_active_task()
+    if task is None:
+        task = db.get_latest_task()
+    if task is None:
+        _abort("No task found. Run 'harness start \"requirement\"' first.")
+    task = dict(task)
 
     typer.echo(f"Task {task['id']}: {task['title']} [{task['status']}]")
 
