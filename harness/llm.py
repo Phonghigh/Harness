@@ -8,8 +8,8 @@ class LLMOutputError(Exception):
 
 
 def extract_json_block(text: str) -> str:
-    """Strip ```json ... ``` fences; fall back to raw text."""
-    match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+    """Strip any fenced code block (```json, ```diff, ``` etc.); fall back to raw text."""
+    match = re.search(r"```[a-z]*\s*(.*?)\s*```", text, re.DOTALL)
     return match.group(1) if match else text.strip()
 
 

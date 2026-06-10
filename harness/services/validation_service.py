@@ -19,7 +19,18 @@ class _LLMCheckResult(BaseModel):
 
 
 def _extract_files_from_patch(patch: str) -> list[str]:
-    return re.findall(r"^\+\+\+ b/(.+)$", patch, re.MULTILINE)
+    # Capture modified/created files from +++ b/<path> and deleted files from --- a/<path>
+    added = re.findall(r"^\+\+\+ b/(.+)$", patch, re.MULTILINE)
+    deleted = re.findall(r"^--- a/(.+)$", patch, re.MULTILINE)
+    # Combine, deduplicate, exclude /dev/null markers
+    seen: set[str] = set()
+    result = []
+    for f in added + deleted:
+        f = f.strip()
+        if f and f != "/dev/null" and f not in seen:
+            seen.add(f)
+            result.append(f)
+    return result
 
 
 def _rule_based_check(contract: dict, patch_content: str) -> list[Violation]:
@@ -54,7 +65,7 @@ def _rule_based_check(contract: dict, patch_content: str) -> list[Violation]:
     spec = json.loads(contract["spec_json"])
     modified_set = set(modified)
     for file_spec in spec.get("files", []):
-        if file_spec.get("action") in ("create", "modify"):
+        if file_spec.get("action") in ("create", "modify", "delete"):
             if file_spec["path"] not in modified_set:
                 violations.append(Violation(
                     type=ViolationType.MISSING_SPEC,
@@ -110,15 +121,24 @@ def check_compliance(
     db: Database,
 ) -> ComplianceReport:
     assert_command_allowed("check", TaskStatus(task["status"]))
+    # Defer the CHECKING_COMPLIANCE transition until after the LLM call succeeds,
+    # so that a network/parse failure doesn't leave the task stuck.
     transition(task, TaskStatus.CHECKING_COMPLIANCE, db)
 
-    rule_violations = _rule_based_check(contract, patch_content)
-    rule_passed = not any(v.severity == "error" for v in rule_violations)
+    try:
+        rule_violations = _rule_based_check(contract, patch_content)
+        rule_passed = not any(v.severity == "error" for v in rule_violations)
 
-    llm_result = _llm_semantic_check(contract, patch_content, rule_violations, llm)
+        llm_result = _llm_semantic_check(contract, patch_content, rule_violations, llm)
+    except Exception:
+        # Roll back to IMPLEMENTING so the user can re-run harness check.
+        checking = {"id": task["id"], "status": TaskStatus.CHECKING_COMPLIANCE}
+        transition(checking, TaskStatus.IMPLEMENTING, db)
+        raise
 
     all_violations = rule_violations + llm_result.violations
-    passed = rule_passed and llm_result.passed
+    # Enforce pass/fail locally: never trust LLM's passed flag if there are error violations.
+    passed = not any(v.severity == "error" for v in all_violations) and llm_result.passed
 
     patch_file = str(harness_dir / "patches" / f"{contract['id']}.diff")
 

@@ -48,7 +48,7 @@ def _build_contract_llm(task: dict, db: Database, llm) -> dict:
     except ValidationError as e:
         raise LLMOutputError(f"LLM returned invalid ContractSpec: {e}") from e
 
-    allowed_files = [f.path for f in spec.files if f.action != "delete"]
+    allowed_files = [f.path for f in spec.files]
     contract_id = db.new_contract_id()
     contract = {
         "id": contract_id,

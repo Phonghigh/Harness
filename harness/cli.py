@@ -263,9 +263,14 @@ def approve(
     except WrongStateError as e:
         _abort(str(e))
 
-    all_approved = approve_decisions(decision_ids, task, db)
+    all_approved, conflicts = approve_decisions(decision_ids, task, db)
     for did in decision_ids:
         typer.echo(f"Decision {did.upper()} approved.")
+
+    if conflicts:
+        typer.echo("\n[WARNING] Possible conflicts with project memory:")
+        for c in conflicts:
+            typer.echo(f"  ⚠  {c['warning']}")
 
     if all_approved:
         typer.echo("\nAll decisions approved! Task → DECISIONS_APPROVED")
@@ -423,22 +428,37 @@ def check(contract_id: str) -> None:
         else:
             typer.echo("\nCompliance FAILED. Task returned to IMPLEMENTING. Fix the patch and re-run.")
     else:
-        typer.echo("[STUB] No API key found — running rule-based check only...")
+        from harness.services.validation_service import _rule_based_check
+        typer.echo("No API key — running rule-based check only (no LLM semantic review).")
         transition(task, TaskStatus.CHECKING_COMPLIANCE, db)
+        rule_violations = _rule_based_check(dict(c), patch["diff_text"])
+        rule_passed = not any(v.severity == "error" for v in rule_violations)
+        verdict = "PASS" if rule_passed else "FAIL"
+        summary = f"Rule-based {verdict}. {len(rule_violations)} violation(s). No LLM review."
         report_id = db.new_compliance_report_id()
         db.create_compliance_report({
             "id": report_id,
             "contract_id": contract_id.upper(),
             "patch_id": patch["id"],
-            "passed": 1,
-            "violations_json": "[]",
-            "summary": "[STUB] Compliance PASS — no violations found.",
+            "passed": int(rule_passed),
+            "violations_json": json.dumps([v.model_dump() for v in rule_violations]),
+            "summary": summary,
             "created_at": now_iso(),
         })
         checking = {"id": task["id"], "status": TaskStatus.CHECKING_COMPLIANCE}
-        transition(checking, TaskStatus.VALIDATING, db)
-        typer.echo("Compliance: PASS (stub)")
-        typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
+        if rule_passed:
+            transition(checking, TaskStatus.VALIDATING, db)
+            typer.echo(f"Compliance: PASS (rule-based only)")
+            if rule_violations:
+                for v in rule_violations:
+                    typer.echo(f"  [{v.severity.upper()}] {v.type}: {v.description}")
+            typer.echo(f"\nNext: git apply .harness/patches/{contract_id.upper()}.diff → harness validate")
+        else:
+            transition(checking, TaskStatus.IMPLEMENTING, db)
+            typer.echo("Compliance: FAIL")
+            for v in rule_violations:
+                typer.echo(f"  [{v.severity.upper()}] {v.type}: {v.description}")
+            typer.echo("\nCompliance FAILED. Task returned to IMPLEMENTING.")
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +514,7 @@ def validate() -> None:
 
 @app.command()
 def remember() -> None:
-    """Extract and save lessons from the completed task (stub)."""
+    """Extract and save architectural lessons from the completed task via LLM."""
     _, config, db = _get_ctx()
     task = db.get_latest_task()
     if task is None:
@@ -505,31 +525,40 @@ def remember() -> None:
     except WrongStateError as e:
         _abort(str(e))
 
-    typer.echo("[STUB] Extracting lessons...")
-
-    stub_memories = [
-        ("lesson", "scope_tip", "Keep entity-only tasks isolated from service layer"),
-        ("project_standard", "api_dto_policy", "API always uses DTO pattern"),
-        ("architecture_rule", "validation_location", "Validation happens at service boundary"),
-    ]
-
-    saved = 0
-    for mem_type, key, value in stub_memories:
-        now = now_iso()
-        db.upsert_memory({
-            "id": Database.new_memory_id(),
-            "type": mem_type,
-            "scope": config.project_name,
-            "key": key,
-            "value_json": json.dumps(value),
-            "created_at": now,
-            "updated_at": now,
-        })
-        saved += 1
-
-    typer.echo(f"\nSaved {saved} memories:")
-    for mem_type, key, value in stub_memories:
-        typer.echo(f"  {mem_type:<20} {key:<30} \"{value}\"")
+    llm = _get_llm(config)
+    if llm is not None:
+        from harness.services.memory_service import write_memory
+        typer.echo("Extracting lessons via LLM...")
+        try:
+            saved_entries = write_memory(task, llm, db, config)
+        except Exception as e:
+            _abort(f"Memory extraction failed: {e}")
+        typer.echo(f"\nSaved {len(saved_entries)} memories:")
+        for entry in saved_entries:
+            val = json.loads(entry["value_json"])
+            lesson = val.get("lesson", str(val)) if isinstance(val, dict) else str(val)
+            typer.echo(f"  {entry['type']:<25} {entry['key']:<35} \"{lesson[:50]}\"")
+    else:
+        typer.echo("[STUB] No API key found — saving example memories.")
+        stub_memories = [
+            ("lesson", "scope_tip", "Keep entity-only tasks isolated from service layer"),
+            ("project_standard", "api_dto_policy", "API always uses DTO pattern"),
+            ("architecture_rule", "validation_location", "Validation happens at service boundary"),
+        ]
+        for mem_type, key, value in stub_memories:
+            now = now_iso()
+            db.upsert_memory({
+                "id": Database.new_memory_id(),
+                "type": mem_type,
+                "scope": config.project_name,
+                "key": key,
+                "value_json": json.dumps(value),
+                "created_at": now,
+                "updated_at": now,
+            })
+        typer.echo(f"\nSaved {len(stub_memories)} memories:")
+        for mem_type, key, value in stub_memories:
+            typer.echo(f"  {mem_type:<20} {key:<30} \"{value}\"")
 
 
 # ---------------------------------------------------------------------------
@@ -550,11 +579,50 @@ def memory_list(
         return
 
     table = Table(title="Memory")
+    table.add_column("ID", style="dim")
     table.add_column("Type", style="cyan")
     table.add_column("Scope")
     table.add_column("Key", style="bold")
     table.add_column("Value")
     for row in rows:
         value = json.loads(row["value_json"])
-        table.add_row(row["type"], row["scope"], row["key"], str(value)[:60])
+        lesson = value.get("lesson", str(value)) if isinstance(value, dict) else str(value)
+        table.add_row(row["id"], row["type"], row["scope"], row["key"], lesson[:55])
     rprint(table)
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str,
+    type_filter: Annotated[Optional[str], typer.Option("--type")] = None,
+) -> None:
+    """Search memories by keyword (matches key and value)."""
+    _, config, db = _get_ctx()
+    from harness.services.memory_service import search_memory
+    rows = search_memory(db, query, type_filter=type_filter, scope_filter=config.project_name)
+
+    if not rows:
+        typer.echo(f"No memories matching '{query}'.")
+        return
+
+    table = Table(title=f"Memory search: '{query}'")
+    table.add_column("ID", style="dim")
+    table.add_column("Type", style="cyan")
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+    for row in rows:
+        value = json.loads(row["value_json"])
+        lesson = value.get("lesson", str(value)) if isinstance(value, dict) else str(value)
+        table.add_row(row["id"], row["type"], row["key"], lesson[:60])
+    rprint(table)
+
+
+@memory_app.command("delete")
+def memory_delete(memory_id: str) -> None:
+    """Delete a memory entry by ID."""
+    _, _, db = _get_ctx()
+    deleted = db.delete_memory(memory_id.upper())
+    if deleted:
+        typer.echo(f"Memory {memory_id.upper()} deleted.")
+    else:
+        _abort(f"Memory {memory_id.upper()} not found.")

@@ -87,13 +87,13 @@ cli.py           ← all services + rich
 - [x] Wire LLM into contract_service (build_contract)
 - [x] harness/services/implementation_service.py
 - [x] harness/services/validation_service.py
-- [ ] **PHASE 2 GATE** ← run verification gate before Phase 3
+- [x] **PHASE 2 GATE** ← run verification gate before Phase 3
 
 ### Phase 3 — Memory & Reuse
-- [ ] harness/services/memory_service.py
-- [ ] Memory injection into interrogator prompt
-- [ ] Conflict detection on `harness approve`
-- [ ] `harness memory search` and `harness memory delete` commands
+- [x] harness/services/memory_service.py
+- [x] Memory injection into interrogator prompt
+- [x] Conflict detection on `harness approve`
+- [x] `harness memory search` and `harness memory delete` commands
 - [ ] **PHASE 3 GATE**
 
 ### Phase 4 — UX Polish

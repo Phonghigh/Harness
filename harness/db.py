@@ -287,6 +287,11 @@ class Database:
                 f"SELECT * FROM memory{where} ORDER BY created_at", params
             ).fetchall()
 
+    def delete_memory(self, memory_id: str) -> bool:
+        with self.connect() as conn:
+            cur = conn.execute("DELETE FROM memory WHERE id = ?", (memory_id,))
+        return cur.rowcount > 0
+
     # --- ID generation ---
 
     @staticmethod

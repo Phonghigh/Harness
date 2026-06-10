@@ -15,13 +15,9 @@ def run_interrogate(task: dict, llm, db: Database) -> list[dict]:
     from harness.schemas.decision import DecisionMap
 
     assert_command_allowed("interrogate", TaskStatus(task["status"]))
-    transition(task, TaskStatus.INTERROGATING, db)
 
-    memories = db.list_memory()
-    memory_text = "\n".join(
-        f"[{m['type']}] {m['key']}: {json.loads(m['value_json'])}"
-        for m in memories
-    ) or "(none)"
+    from harness.services.memory_service import inject_project_memory
+    memory_text = inject_project_memory(db)
 
     template = load_prompt("interrogator")
     parts = template.split("---USER---", 1)
@@ -30,6 +26,8 @@ def run_interrogate(task: dict, llm, db: Database) -> list[dict]:
     user = user.replace("{requirement}", task["raw_requirement"])
     user = user.replace("{project_memory}", memory_text)
 
+    # Make LLM call and parse BEFORE transitioning state, so a failure
+    # doesn't leave the task stuck in INTERROGATING.
     raw_response = llm.complete(system, user)
     raw = extract_json_block(raw_response)
 
@@ -37,6 +35,9 @@ def run_interrogate(task: dict, llm, db: Database) -> list[dict]:
         decision_map = DecisionMap.model_validate_json(raw)
     except ValidationError as e:
         raise LLMOutputError(f"LLM returned invalid DecisionMap: {e}") from e
+
+    # All data is valid — now commit the state transition.
+    transition(task, TaskStatus.INTERROGATING, db)
 
     decisions = []
     for item in decision_map.decisions:
