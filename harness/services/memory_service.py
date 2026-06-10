@@ -27,8 +27,10 @@ def _slugify(text: str) -> str:
 
 
 def inject_project_memory(db: Database, scope: str | None = None) -> str:
-    """Return formatted memory string for injection into prompts."""
+    """Return formatted memory string for injection into prompts, tracking usage."""
     memories = db.list_memory(scope_filter=scope)
+    for m in memories:
+        db.increment_memory_applied(m["id"])
     return "\n".join(
         f"[{m['type']}] {m['key']}: {json.loads(m['value_json'])}"
         for m in memories
@@ -92,14 +94,18 @@ def write_memory(task: dict, llm: LLMAdapter, db: Database, config) -> list[dict
 
     saved = []
     for mem in result.memories:
+        now = now_iso()
         entry = {
             "id": Database.new_memory_id(),
             "type": mem.category,
             "scope": config.project_name,
             "key": _slugify(mem.lesson),
             "value_json": json.dumps({"lesson": mem.lesson, "context": mem.context}),
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
+            "source_task_id": task["id"],
+            "applied_count": 0,
+            "last_applied_at": None,
+            "created_at": now,
+            "updated_at": now,
         }
         db.upsert_memory(entry)
         saved.append(entry)

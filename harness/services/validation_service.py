@@ -140,6 +140,8 @@ def check_compliance(
     # Enforce pass/fail locally: never trust LLM's passed flag if there are error violations.
     passed = not any(v.severity == "error" for v in all_violations) and llm_result.passed
 
+    error_count = sum(1 for v in all_violations if v.severity == "error")
+    warning_count = sum(1 for v in all_violations if v.severity == "warning")
     patch_file = str(harness_dir / "patches" / f"{contract['id']}.diff")
 
     report = ComplianceReport(
@@ -150,6 +152,8 @@ def check_compliance(
         summary=llm_result.summary,
         rule_based_passed=rule_passed,
         llm_review=llm_result.llm_review,
+        error_count=error_count,
+        warning_count=warning_count,
     )
 
     latest_patch = db.get_latest_patch(contract["id"])

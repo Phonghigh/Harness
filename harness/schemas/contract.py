@@ -34,4 +34,5 @@ class Contract(BaseModel):
     forbidden: list[str]           # patterns that must not appear in added lines
     spec: ContractSpec
     status: ContractStatus = ContractStatus.DRAFT
+    decision_ids: list[str] = []   # decisions that produced this contract (D001, D002, ...)
     created_at: datetime

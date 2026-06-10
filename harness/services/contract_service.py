@@ -32,6 +32,7 @@ def _build_contract_llm(task: dict, db: Database, llm) -> dict:
         }
         for d in decisions
     ]
+    decision_ids = [d["id"] for d in decisions]
 
     template = load_prompt("contract_builder")
     parts = template.split("---USER---", 1)
@@ -58,6 +59,7 @@ def _build_contract_llm(task: dict, db: Database, llm) -> dict:
         "forbidden_json": json.dumps(_DEFAULT_FORBIDDEN),
         "spec_json": spec.model_dump_json(),
         "status": ContractStatus.APPROVED,
+        "decision_ids_json": json.dumps(decision_ids),
         "created_at": now_iso(),
     }
     db.create_contract(contract)
@@ -75,6 +77,7 @@ def _build_contract_stub(task: dict, db: Database) -> dict:
         "constraints": ["no new dependencies", "follow existing code style"],
         "acceptance_criteria": ["task completes without error"],
     }
+    decision_ids = [d["id"] for d in db.get_decisions(task["id"])]
     contract = {
         "id": contract_id,
         "task_id": task["id"],
@@ -83,6 +86,7 @@ def _build_contract_stub(task: dict, db: Database) -> dict:
         "forbidden_json": json.dumps(_DEFAULT_FORBIDDEN),
         "spec_json": json.dumps(stub_spec),
         "status": ContractStatus.APPROVED,
+        "decision_ids_json": json.dumps(decision_ids),
         "created_at": now_iso(),
     }
     db.create_contract(contract)

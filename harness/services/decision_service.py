@@ -5,6 +5,7 @@ import typer
 from harness.db import Database, now_iso
 from harness.schemas.decision import DecisionStatus
 from harness.schemas.task import TaskStatus
+from harness.services.conflict_service import ConflictResult, detect_conflicts_fast, detect_conflicts_llm
 from harness.state_machine import assert_command_allowed, transition
 
 STUB_DECISIONS = [
@@ -85,44 +86,11 @@ def answer_decision(decision_id: str, answer: str, task: dict, db: Database) -> 
     })
 
 
-def _detect_conflicts(decision: dict, memories: list) -> list[dict]:
-    """Keyword-scan: warn if a memory lesson appears to contradict selected_answer."""
-    answer = (decision.get("selected_answer") or "").lower()
-    conflicts = []
-    for m in memories:
-        try:
-            val = json.loads(m["value_json"])
-            lesson = (val.get("lesson") or str(val)).lower() if isinstance(val, dict) else str(val).lower()
-        except (json.JSONDecodeError, AttributeError):
-            continue
-        # Simple antonym pairs that signal a potential contradiction
-        _ANTONYMS = [
-            ("dto", "entity directly"),
-            ("entity directly", "dto"),
-            ("sync", "async"),
-            ("async", "sync"),
-            ("soft delete", "hard delete"),
-            ("hard delete", "soft delete"),
-            ("rest", "graphql"),
-            ("graphql", "rest"),
-            ("monolith", "microservice"),
-            ("microservice", "monolith"),
-        ]
-        for memory_word, answer_word in _ANTONYMS:
-            if memory_word in lesson and answer_word in answer:
-                conflicts.append({
-                    "memory_key": m["key"],
-                    "warning": (
-                        f"Memory '{m['key']}' recommends '{memory_word}' "
-                        f"but answer contains '{answer_word}'"
-                    ),
-                })
-                break
-    return conflicts
-
-
 def approve_decisions(
-    decision_ids: list[str], task: dict, db: Database
+    decision_ids: list[str],
+    task: dict,
+    db: Database,
+    llm=None,
 ) -> tuple[bool, list[dict]]:
     assert_command_allowed("approve", TaskStatus(task["status"]))
     all_conflicts: list[dict] = []
@@ -143,7 +111,16 @@ def approve_decisions(
             "status": DecisionStatus.APPROVED,
             "updated_at": now_iso(),
         })
-        all_conflicts.extend(_detect_conflicts(dict(dec), memories))
+
+        if llm is not None:
+            result: ConflictResult = detect_conflicts_llm(dict(dec), memories, llm)
+            if result.has_conflict:
+                all_conflicts.append({
+                    "memory_key": result.conflicting_memory_key or "",
+                    "warning": result.explanation or "Conflict detected",
+                })
+        else:
+            all_conflicts.extend(detect_conflicts_fast(dict(dec), memories))
 
     pending = db.get_pending_decisions(task["id"])
     if not pending:

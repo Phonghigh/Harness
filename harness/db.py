@@ -54,14 +54,15 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS contracts (
-                    id                 TEXT PRIMARY KEY,
-                    task_id            TEXT NOT NULL,
-                    scope              TEXT NOT NULL,
-                    allowed_files_json TEXT NOT NULL,
-                    forbidden_json     TEXT NOT NULL,
-                    spec_json          TEXT NOT NULL,
-                    status             TEXT NOT NULL DEFAULT 'draft',
-                    created_at         TEXT NOT NULL,
+                    id                   TEXT PRIMARY KEY,
+                    task_id              TEXT NOT NULL,
+                    scope                TEXT NOT NULL,
+                    allowed_files_json   TEXT NOT NULL,
+                    forbidden_json       TEXT NOT NULL,
+                    spec_json            TEXT NOT NULL,
+                    status               TEXT NOT NULL DEFAULT 'draft',
+                    decision_ids_json    TEXT NOT NULL DEFAULT '[]',
+                    created_at           TEXT NOT NULL,
                     FOREIGN KEY (task_id) REFERENCES tasks(id)
                 );
 
@@ -87,16 +88,57 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS memory (
-                    id          TEXT PRIMARY KEY,
-                    type        TEXT NOT NULL,
-                    scope       TEXT NOT NULL,
-                    key         TEXT NOT NULL,
-                    value_json  TEXT NOT NULL,
-                    created_at  TEXT NOT NULL,
-                    updated_at  TEXT NOT NULL,
+                    id              TEXT PRIMARY KEY,
+                    type            TEXT NOT NULL,
+                    scope           TEXT NOT NULL,
+                    key             TEXT NOT NULL,
+                    value_json      TEXT NOT NULL,
+                    source_task_id  TEXT,
+                    applied_count   INTEGER NOT NULL DEFAULT 0,
+                    last_applied_at TEXT,
+                    created_at      TEXT NOT NULL,
+                    updated_at      TEXT NOT NULL,
                     UNIQUE(type, scope, key)
                 );
+
+                CREATE TABLE IF NOT EXISTS evaluations (
+                    id           TEXT PRIMARY KEY,
+                    task_id      TEXT NOT NULL,
+                    contract_id  TEXT,
+                    metrics_json TEXT NOT NULL,
+                    created_at   TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id)
+                );
             """)
+        self._run_migrations()
+
+    def _run_migrations(self) -> None:
+        """Idempotent schema migrations for existing databases."""
+        with self.connect() as conn:
+            contract_cols = {r[1] for r in conn.execute("PRAGMA table_info(contracts)").fetchall()}
+            if "decision_ids_json" not in contract_cols:
+                conn.execute("ALTER TABLE contracts ADD COLUMN decision_ids_json TEXT NOT NULL DEFAULT '[]'")
+
+            mem_cols = {r[1] for r in conn.execute("PRAGMA table_info(memory)").fetchall()}
+            if "source_task_id" not in mem_cols:
+                conn.execute("ALTER TABLE memory ADD COLUMN source_task_id TEXT")
+            if "applied_count" not in mem_cols:
+                conn.execute("ALTER TABLE memory ADD COLUMN applied_count INTEGER NOT NULL DEFAULT 0")
+            if "last_applied_at" not in mem_cols:
+                conn.execute("ALTER TABLE memory ADD COLUMN last_applied_at TEXT")
+
+            eval_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "evaluations" not in eval_tables:
+                conn.execute("""
+                    CREATE TABLE evaluations (
+                        id           TEXT PRIMARY KEY,
+                        task_id      TEXT NOT NULL,
+                        contract_id  TEXT,
+                        metrics_json TEXT NOT NULL,
+                        created_at   TEXT NOT NULL,
+                        FOREIGN KEY (task_id) REFERENCES tasks(id)
+                    )
+                """)
 
     # --- Tasks ---
 
@@ -183,8 +225,10 @@ class Database:
         with self.connect() as conn:
             conn.execute(
                 "INSERT INTO contracts"
-                " (id, task_id, scope, allowed_files_json, forbidden_json, spec_json, status, created_at)"
-                " VALUES (:id, :task_id, :scope, :allowed_files_json, :forbidden_json, :spec_json, :status, :created_at)",
+                " (id, task_id, scope, allowed_files_json, forbidden_json, spec_json, status,"
+                "  decision_ids_json, created_at)"
+                " VALUES (:id, :task_id, :scope, :allowed_files_json, :forbidden_json, :spec_json,"
+                "         :status, :decision_ids_json, :created_at)",
                 contract,
             )
 
@@ -266,11 +310,17 @@ class Database:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO memory (id, type, scope, key, value_json, created_at, updated_at)
-                VALUES (:id, :type, :scope, :key, :value_json, :created_at, :updated_at)
-                ON CONFLICT(type, scope, key)
-                DO UPDATE SET value_json = excluded.value_json,
-                             updated_at  = excluded.updated_at
+                INSERT INTO memory
+                  (id, type, scope, key, value_json, source_task_id, applied_count,
+                   last_applied_at, created_at, updated_at)
+                VALUES
+                  (:id, :type, :scope, :key, :value_json,
+                   :source_task_id, :applied_count, :last_applied_at,
+                   :created_at, :updated_at)
+                ON CONFLICT(type, scope, key) DO UPDATE SET
+                  value_json      = excluded.value_json,
+                  source_task_id  = excluded.source_task_id,
+                  updated_at      = excluded.updated_at
                 """,
                 entry,
             )
@@ -299,6 +349,63 @@ class Database:
             cur = conn.execute("DELETE FROM memory WHERE id = ?", (memory_id,))
         return cur.rowcount > 0
 
+    def increment_memory_applied(self, memory_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE memory SET applied_count = applied_count + 1, last_applied_at = ? WHERE id = ?",
+                (now_iso(), memory_id),
+            )
+
+    # --- Task history ---
+
+    def list_tasks(self, limit: int = 50) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+
+    # --- Compliance history (by task) ---
+
+    def get_compliance_reports_for_task(self, task_id: str) -> list[sqlite3.Row]:
+        """Return all compliance reports for contracts belonging to task_id."""
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT cr.* FROM compliance_reports cr
+                JOIN contracts c ON cr.contract_id = c.id
+                WHERE c.task_id = ?
+                ORDER BY cr.created_at
+                """,
+                (task_id,),
+            ).fetchall()
+
+    # --- Evaluations ---
+
+    def create_evaluation(self, evaluation: dict) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO evaluations (id, task_id, contract_id, metrics_json, created_at)"
+                " VALUES (:id, :task_id, :contract_id, :metrics_json, :created_at)",
+                evaluation,
+            )
+
+    def get_evaluation(self, task_id: str) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM evaluations WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+
+    def list_evaluations(self, limit: int = 50) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM evaluations ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+
+    def count_evaluations(self) -> int:
+        with self.connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0]
+
     # --- ID generation ---
 
     @staticmethod
@@ -320,3 +427,6 @@ class Database:
     @staticmethod
     def new_memory_id() -> str:
         return "M" + uuid.uuid4().hex[:8].upper()
+
+    def new_evaluation_id(self) -> str:
+        return f"E{self.count_evaluations() + 1:03d}"
