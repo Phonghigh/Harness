@@ -16,6 +16,8 @@ class HarnessConfig(BaseModel):
     llm_retries: Annotated[int, Field(ge=1)] = 3
     context_max_depth: Annotated[int, Field(ge=1)] = 4
     context_extra_files: list[str] = []
+    use_claude_code: bool = True
+    claude_code_timeout: Annotated[int, Field(ge=10)] = 300
 
 
 class EnvSettings(BaseSettings):

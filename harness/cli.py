@@ -969,6 +969,26 @@ def config_set(key: str, value: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# harness ui
+# ---------------------------------------------------------------------------
+
+@app.command()
+def ui(
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to run on")] = 8501,
+) -> None:
+    """Open the Harness web dashboard (Streamlit)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    app_path = Path(__file__).parent / "app.py"
+    typer.echo(f"Starting Harness UI at http://localhost:{port}")
+    subprocess.run(
+        [sys.executable, "-m", "streamlit", "run", str(app_path), "--server.port", str(port)],
+        check=False,
+    )
+
+
+# ---------------------------------------------------------------------------
 # harness serve
 # ---------------------------------------------------------------------------
 

@@ -7,26 +7,36 @@ from harness.schemas.task import TaskStatus
 from harness.state_machine import assert_command_allowed, transition
 
 
-def implement(
-    task: dict,
-    contract: dict,
-    harness_dir: Path,
-    llm: LLMAdapter,
-    db: Database,
-) -> dict:
-    assert_command_allowed("implement", TaskStatus(task["status"]))
+def _prepare_impl_context(contract: dict, project_root: Path) -> tuple[str, dict]:
+    """Build file_contents string and contract_data dict for the syntax executor prompt.
 
-    project_root = harness_dir.parent
+    Fixes modify→create for files that don't exist yet, preventing SYNTAX_EXECUTOR_ERROR.
+    """
     allowed_files = json.loads(contract["allowed_files_json"])
+    spec = json.loads(contract["spec_json"])
 
+    # Build a set of files that don't exist so we can fix the spec
+    missing: set[str] = {
+        fp for fp in allowed_files
+        if not (project_root / fp).exists()
+    }
+
+    # Patch spec: modify → create for non-existent files
+    patched_files = []
+    for f in spec.get("files", []):
+        if f.get("action") == "modify" and f.get("path") in missing:
+            f = {**f, "action": "create"}
+        patched_files.append(f)
+    patched_spec = {**spec, "files": patched_files}
+
+    # Read file contents
     file_parts = []
     for file_path in allowed_files:
         full_path = project_root / file_path
         if full_path.exists():
-            content = full_path.read_text()
-            file_parts.append(f"=== {file_path} ===\n{content}")
+            file_parts.append(f"=== {file_path} ===\n{full_path.read_text()}")
         else:
-            file_parts.append(f"=== {file_path} ===\n(FILE DOES NOT EXIST YET)")
+            file_parts.append(f"=== {file_path} ===\n(FILE DOES NOT EXIST YET — use create action)")
     file_contents = "\n\n".join(file_parts)
 
     contract_data = {
@@ -34,9 +44,12 @@ def implement(
         "scope": contract["scope"],
         "allowed_files": allowed_files,
         "forbidden": json.loads(contract["forbidden_json"]),
-        "spec": json.loads(contract["spec_json"]),
+        "spec": patched_spec,
     }
+    return file_contents, contract_data
 
+
+def _call_syntax_executor(contract_data: dict, file_contents: str, llm: LLMAdapter) -> str:
     template = load_prompt("syntax_executor")
     parts = template.split("---USER---", 1)
     system = parts[0].strip()
@@ -49,7 +62,20 @@ def implement(
     if raw_response.strip().startswith("SYNTAX_EXECUTOR_ERROR:"):
         raise LLMOutputError(raw_response.strip())
 
-    diff_text = extract_json_block(raw_response) if "```" in raw_response else raw_response.strip()
+    return extract_json_block(raw_response) if "```" in raw_response else raw_response.strip()
+
+
+def implement(
+    task: dict,
+    contract: dict,
+    harness_dir: Path,
+    llm: LLMAdapter,
+    db: Database,
+) -> dict:
+    assert_command_allowed("implement", TaskStatus(task["status"]))
+
+    file_contents, contract_data = _prepare_impl_context(contract, harness_dir.parent)
+    diff_text = _call_syntax_executor(contract_data, file_contents, llm)
 
     patches_dir = harness_dir / "patches"
     patches_dir.mkdir(exist_ok=True)
@@ -97,48 +123,14 @@ def reimplement(
     db: Database,
     compliance_summary: str = "",
 ) -> dict:
-    """Re-generate a patch for a task already in IMPLEMENTING state after compliance failure.
-
-    Unlike implement(), this asserts IMPLEMENTING state and does not transition into it.
-    """
+    """Re-generate patch when already in IMPLEMENTING state (compliance retry)."""
     assert_command_allowed("reimplement", TaskStatus(task["status"]))
 
-    project_root = harness_dir.parent
-    allowed_files = json.loads(contract["allowed_files_json"])
-
-    file_parts = []
-    for file_path in allowed_files:
-        full_path = project_root / file_path
-        if full_path.exists():
-            content = full_path.read_text()
-            file_parts.append(f"=== {file_path} ===\n{content}")
-        else:
-            file_parts.append(f"=== {file_path} ===\n(FILE DOES NOT EXIST YET)")
-    file_contents = "\n\n".join(file_parts)
-
-    contract_data = {
-        "id": contract["id"],
-        "scope": contract["scope"],
-        "allowed_files": allowed_files,
-        "forbidden": json.loads(contract["forbidden_json"]),
-        "spec": json.loads(contract["spec_json"]),
-    }
+    file_contents, contract_data = _prepare_impl_context(contract, harness_dir.parent)
     if compliance_summary:
         contract_data["compliance_feedback"] = compliance_summary
 
-    template = load_prompt("syntax_executor")
-    parts = template.split("---USER---", 1)
-    system = parts[0].strip()
-    user = parts[1].strip()
-    user = user.replace("{contract_json}", json.dumps(contract_data, indent=2))
-    user = user.replace("{file_contents}", file_contents)
-
-    raw_response = llm.complete(system, user)
-
-    if raw_response.strip().startswith("SYNTAX_EXECUTOR_ERROR:"):
-        raise LLMOutputError(raw_response.strip())
-
-    diff_text = extract_json_block(raw_response) if "```" in raw_response else raw_response.strip()
+    diff_text = _call_syntax_executor(contract_data, file_contents, llm)
 
     patches_dir = harness_dir / "patches"
     patches_dir.mkdir(exist_ok=True)

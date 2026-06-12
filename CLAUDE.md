@@ -199,6 +199,29 @@ cli.py           ← all services + rich
 - [ ] runtime.py: integrate check_decision_gate before auto-approve
 - [ ] **PHASE 14 GATE**
 
+### Phase 15 — Claude Code Syntax Executor Integration
+
+Full spec: `plans/phase15_claude_code_integration.md`
+
+- [ ] harness/config.py: `use_claude_code: bool = True`, `claude_code_timeout: int = 300`
+- [ ] harness/services/claude_executor.py: 5 functions (is_claude_available, build_impl_prompt, run_claude_implement, capture_diff_staged, reset_allowed_files)
+- [ ] harness/services/implementation_service.py: implement() + reimplement() dispatch to Claude Code or LLM
+- [ ] harness/runtime.py: pass `config=config` to implement() and reimplement()
+- [ ] harness/cli.py: config-set handles use_claude_code/claude_code_timeout, implement shows mode, apply shows mode-aware message
+- [ ] harness/server.py: harness_implement tool passes config=config
+- [ ] harness/app.py: mode badge, mode-aware apply button, config toggles
+- [ ] tests/test_claude_executor.py: 13 tests
+- [ ] **PHASE 15 GATE**
+
+```bash
+python -c "from harness.services.claude_executor import is_claude_available; print('claude:', is_claude_available())"
+python -c "from harness.config import HarnessConfig; c = HarnessConfig(project_name='x', llm_provider='anthropic', llm_model='m'); assert c.use_claude_code == True; print('config OK')"
+pytest tests/test_claude_executor.py -v
+pytest tests/ -q
+harness config set use_claude_code true
+harness config set claude_code_timeout 120
+```
+
 ## Phase Verification Gates
 
 ### Phase 1 Gate
@@ -288,6 +311,32 @@ To resume building autonomously:
 /loop Continue building the Harness project. Read CLAUDE.md Build Progress, find the first unchecked [ ] phase item, implement it per the plan at /home/fionn/.claude/plans/harness-complete-build-hashed-garden.md, run its GATE command (must pass green), mark [x] in CLAUDE.md, then continue to the next unchecked item. Never skip the GATE. Never auto-apply patches. Never commit without running pytest first.
 ```
 
+To implement Phase 15 (Claude Code integration) specifically:
+
+```
+/loop Implement Phase 15 — Claude Code Syntax Executor Integration in Harness.
+
+PLAN FILE: plans/phase15_claude_code_integration.md
+CHECKLIST SECTION: "Build Checklist" (the - [ ] items)
+
+For each unchecked [ ] item:
+1. Read the corresponding Phase section in plans/phase15_claude_code_integration.md for exact specs
+2. Implement exactly what the spec says — no more, no less
+3. Run the Phase Gate command from the plan — it MUST pass green before continuing
+4. Mark the item [x] in plans/phase15_claude_code_integration.md
+5. Also mark the matching item [x] in CLAUDE.md under "Phase 15"
+6. Run pytest tests/ -q — must be green after every phase
+7. Move to the next unchecked item
+
+Rules:
+- Never skip a Gate
+- Never commit without pytest passing
+- Never implement beyond what the phase spec says
+- If a Gate fails, fix it before moving on
+- After all 9 items are checked, print "Phase 15 COMPLETE"
+```
+
 Full loop instructions: `knowledge/AGENT_LOOP.md`
 Detailed specs per phase: `/home/fionn/.claude/plans/harness-complete-build-hashed-garden.md`
+Phase 15 spec: `plans/phase15_claude_code_integration.md`
 Reference docs: `knowledge/`
