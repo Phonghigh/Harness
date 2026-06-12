@@ -34,7 +34,10 @@ app.add_typer(config_app, name="config")
 
 
 def _get_ctx() -> tuple[Path, HarnessConfig, Database]:
-    harness_dir, config = load_config()
+    try:
+        harness_dir, config = load_config()
+    except ValueError as e:
+        _abort(str(e))
     db = Database(harness_dir / "harness.db")
     return harness_dir, config, db
 

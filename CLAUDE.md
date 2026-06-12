@@ -147,9 +147,9 @@ cli.py           ← all services + rich
 
 ### Phase 8 — Land Uncommitted Changes
 
-- [ ] Verify pytest green + no `import typer` in services
-- [ ] Commit: cli.py run, auto_answer_decisions, decision_answerer.md, compliance_checker.md, contract two-step parse
-- [ ] **PHASE 8 GATE**
+- [x] Verify pytest green + no `import typer` in services
+- [x] Commit: cli.py run, auto_answer_decisions, decision_answerer.md, compliance_checker.md, contract two-step parse
+- [x] **PHASE 8 GATE**
 
 ### Phase 9 — Memory Category Column (already implemented)
 

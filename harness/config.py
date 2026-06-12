@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 from typing import Annotated
 
-import typer
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
@@ -43,9 +42,7 @@ def find_harness_root(start: Path | None = None) -> Path | None:
 def load_config() -> tuple[Path, HarnessConfig]:
     harness_dir = find_harness_root()
     if harness_dir is None:
-        raise typer.BadParameter(
-            "Not a harness project. Run 'harness init' first."
-        )
+        raise ValueError("Not a harness project. Run 'harness init' first.")
     data = json.loads((harness_dir / "config.json").read_text())
     return harness_dir, HarnessConfig.model_validate(data)
 
