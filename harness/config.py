@@ -14,6 +14,8 @@ class HarnessConfig(BaseModel):
     validate_commands: list[str] = []
     max_tokens: Annotated[int, Field(ge=1)] = 4096
     llm_retries: Annotated[int, Field(ge=1)] = 3
+    context_max_depth: Annotated[int, Field(ge=1)] = 4
+    context_extra_files: list[str] = []
 
 
 class EnvSettings(BaseSettings):

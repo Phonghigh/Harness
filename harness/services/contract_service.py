@@ -8,15 +8,15 @@ from harness.state_machine import assert_command_allowed, transition
 _DEFAULT_FORBIDDEN = ["TODO", "FIXME", "HACK", "print(", "console.log(", "debugger"]
 
 
-def build_contract(task: dict, db: Database, llm=None) -> dict:
+def build_contract(task: dict, db: Database, llm=None, harness_dir=None, config=None) -> dict:
     assert_command_allowed("contract", TaskStatus(task["status"]))
 
     if llm is not None:
-        return _build_contract_llm(task, db, llm)
+        return _build_contract_llm(task, db, llm, harness_dir=harness_dir, config=config)
     return _build_contract_stub(task, db)
 
 
-def _build_contract_llm(task: dict, db: Database, llm) -> dict:
+def _build_contract_llm(task: dict, db: Database, llm, harness_dir=None, config=None) -> dict:
     from pydantic import ValidationError
 
     from harness.llm import LLMOutputError, extract_json_block, load_prompt
@@ -34,12 +34,19 @@ def _build_contract_llm(task: dict, db: Database, llm) -> dict:
     ]
     decision_ids = [d["id"] for d in decisions]
 
+    from pathlib import Path
+    from harness.services.scanner_service import build_file_tree
+    max_depth = config.context_max_depth if config else 4
+    harness_path = Path(harness_dir) if harness_dir else None
+    file_tree = build_file_tree(harness_path.parent, max_depth=max_depth) if harness_path else "(unknown)"
+
     template = load_prompt("contract_builder")
     parts = template.split("---USER---", 1)
     system = parts[0].strip()
     user = parts[1].strip()
     user = user.replace("{requirement}", task["raw_requirement"])
     user = user.replace("{decisions_json}", json.dumps(decisions_data, indent=2))
+    user = user.replace("{file_tree}", file_tree)
 
     raw_response = llm.complete(system, user)
     raw = extract_json_block(raw_response)

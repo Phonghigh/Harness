@@ -24,6 +24,7 @@ harness-mcp = "harness.server:run"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "ruff>=0.4.0", "mypy>=1.10.0"]
+ui = ["streamlit>=1.35.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

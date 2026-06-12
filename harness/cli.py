@@ -171,7 +171,7 @@ def status() -> None:
 @app.command()
 def interrogate() -> None:
     """Generate decision map for the active task via LLM (or stub if no API key)."""
-    _, config, db = _get_ctx()
+    harness_dir, config, db = _get_ctx()
     task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("interrogate", TaskStatus(task["status"]))
@@ -182,7 +182,7 @@ def interrogate() -> None:
     if llm is not None:
         typer.echo("Interrogating requirement via LLM...")
         try:
-            decisions = run_interrogate(task, llm, db)
+            decisions = run_interrogate(task, llm, db, harness_dir=harness_dir, config=config)
         except Exception as e:
             _abort(f"LLM interrogation failed: {e}")
     else:
@@ -335,7 +335,7 @@ def approve(
 @app.command()
 def contract() -> None:
     """Build implementation contract from approved decisions via LLM."""
-    _, config, db = _get_ctx()
+    harness_dir, config, db = _get_ctx()
     task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("contract", TaskStatus(task["status"]))
@@ -348,7 +348,7 @@ def contract() -> None:
     else:
         typer.echo("[STUB] No API key found — using stub contract.")
     try:
-        c = build_contract(task, db, llm)
+        c = build_contract(task, db, llm, harness_dir=harness_dir, config=config)
     except Exception as e:
         _abort(f"Contract build failed: {e}")
     allowed = json.loads(c["allowed_files_json"])
@@ -943,7 +943,7 @@ def memory_delete(memory_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 _SETTABLE_FIELDS = {"llm_provider", "llm_model", "project_name"}
-_INT_FIELDS = {"max_tokens", "llm_retries"}
+_INT_FIELDS = {"max_tokens", "llm_retries", "context_max_depth"}
 
 
 @config_app.command("set")

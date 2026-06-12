@@ -100,12 +100,15 @@ def harness_interrogate() -> dict:
     Run LLM interrogation to extract 5–10 architectural decisions for the active task.
     Uses project memory to avoid re-asking already-decided patterns.
     """
-    _, _, db = _ctx()
+    harness_dir, config, db = _ctx()
     task = _active_task()
     if task is None:
         return {"error": "No active task. Use harness_create_task() first."}
     llm = _get_llm()
-    decisions = run_interrogate(task, llm, db) if llm else generate_stub_decisions(task, db)
+    decisions = (
+        run_interrogate(task, llm, db, harness_dir=harness_dir, config=config)
+        if llm else generate_stub_decisions(task, db)
+    )
     return {
         "decisions_generated": len(decisions),
         "decisions": [
@@ -182,12 +185,12 @@ def harness_approve_decisions(decision_ids: list[str]) -> dict:
 @mcp.tool()
 def harness_build_contract() -> dict:
     """Build an implementation contract from all approved decisions via LLM."""
-    _, _, db = _ctx()
+    harness_dir, config, db = _ctx()
     task = _active_task()
     if task is None:
         return {"error": "No active task."}
     llm = _get_llm()
-    c = build_contract(task, db, llm)
+    c = build_contract(task, db, llm, harness_dir=harness_dir, config=config)
     return {
         "contract_id": c["id"],
         "scope": c["scope"],

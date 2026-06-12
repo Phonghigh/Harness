@@ -6,7 +6,9 @@ from harness.schemas.task import TaskStatus
 from harness.state_machine import assert_command_allowed, transition
 
 
-def run_interrogate(task: dict, llm, db: Database) -> list[dict]:
+def run_interrogate(task: dict, llm, db: Database, harness_dir=None, config=None) -> list[dict]:
+    from pathlib import Path
+
     from pydantic import ValidationError
 
     from harness.llm import LLMOutputError, extract_json_block, load_prompt
@@ -17,12 +19,20 @@ def run_interrogate(task: dict, llm, db: Database) -> list[dict]:
     from harness.services.memory_service import inject_project_memory
     memory_text = inject_project_memory(db)
 
+    from harness.services.scanner_service import build_codebase_context
+    extra_files = config.context_extra_files if config else []
+    max_depth = config.context_max_depth if config else 4
+    harness_path = Path(harness_dir) if harness_dir else None
+    ctx = build_codebase_context(harness_path, extra_files, max_depth) if harness_path else ""
+    codebase_text = ctx if ctx else "(no existing codebase)"
+
     template = load_prompt("interrogator")
     parts = template.split("---USER---", 1)
     system = parts[0].strip()
     user = parts[1].strip()
     user = user.replace("{requirement}", task["raw_requirement"])
     user = user.replace("{project_memory}", memory_text)
+    user = user.replace("{codebase_context}", codebase_text)
 
     # Make LLM call and parse BEFORE transitioning state, so a failure
     # doesn't leave the task stuck in INTERROGATING.

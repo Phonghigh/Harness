@@ -32,6 +32,8 @@ migration_compatibility, implementation_scope
 - Do not duplicate decision categories unless the requirement genuinely requires it.
 - Incorporate any project standards from EXISTING PROJECT STANDARDS — do not ask
   about things already decided there.
+- Use EXISTING CODEBASE to inform decisions about file locations, naming, and tech
+  stack. Do not ask about things already evident from the codebase structure.
 
 # Failure Mode
 If the requirement is too vague to extract any meaningful decisions, return:
@@ -44,3 +46,6 @@ REQUIREMENT:
 
 EXISTING PROJECT STANDARDS:
 {project_memory}
+
+EXISTING CODEBASE:
+{codebase_context}

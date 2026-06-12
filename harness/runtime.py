@@ -71,7 +71,7 @@ def run_until_pause(
                     paused_at=PauseReason.LLM_UNAVAILABLE,
                     message="LLM required for interrogation. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.",
                 )
-            run_interrogate(task, llm, db)
+            run_interrogate(task, llm, db, harness_dir=harness_dir, config=config)
             continue
 
         # --- WAITING_FOR_DECISIONS: auto-answer then approve ---
@@ -111,7 +111,7 @@ def run_until_pause(
                     paused_at=PauseReason.LLM_UNAVAILABLE,
                     message="LLM required for contract generation.",
                 )
-            contract = build_contract(task, db, llm)
+            contract = build_contract(task, db, llm, harness_dir=harness_dir, config=config)
             continue
 
         # --- WAITING_FOR_CONTRACT_APPROVAL: auto-approve in runtime, or pause ---

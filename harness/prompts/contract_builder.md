@@ -26,6 +26,7 @@ Output JSON ONLY. No explanation before or after. No markdown fences.
 - Do not include files that are not changed by this feature.
 - Do not add error handling, logging, or features not mentioned in the decisions.
 - Minimum 1 file, minimum 1 constraint, minimum 2 acceptance criteria.
+- Use EXISTING FILE TREE to choose correct paths. Prefer modifying existing files over creating new ones when the file already exists.
 
 # Failure Mode
 If the decisions are contradictory or insufficient to produce a contract, return:
@@ -38,3 +39,6 @@ REQUIREMENT:
 
 APPROVED DECISIONS:
 {decisions_json}
+
+EXISTING FILE TREE:
+{file_tree}
