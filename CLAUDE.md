@@ -145,6 +145,60 @@ cli.py           ← all services + rich
 - [x] tests/ (56 tests — state_machine, decision, contract, validation, memory)
 - [x] **PHASE 7 GATE**
 
+### Phase 8 — Land Uncommitted Changes
+
+- [ ] Verify pytest green + no `import typer` in services
+- [ ] Commit: cli.py run, auto_answer_decisions, decision_answerer.md, compliance_checker.md, contract two-step parse
+- [ ] **PHASE 8 GATE**
+
+### Phase 9 — Memory Category Column (already implemented)
+
+- [ ] Verify gate command passes (category column, upsert, list_memory, conflict_service)
+- [ ] **PHASE 9 GATE**
+
+### Phase 10 — Agent Runtime
+
+- [ ] harness/runtime.py (PauseReason, RuntimeResult, run_until_pause)
+- [ ] implementation_service.py: reimplement()
+- [ ] state_machine.py: COMMAND_REQUIRES["reimplement"]
+- [ ] cli.py: slim run command + _render_runtime_result()
+- [ ] tests/test_runtime.py (4 tests)
+- [ ] **PHASE 10 GATE**
+
+### Phase 11 — Contract and Patch Lifecycle Gates
+
+- [ ] schemas/task.py: WAITING_FOR_CONTRACT_APPROVAL, WAITING_FOR_PATCH_APPROVAL
+- [ ] state_machine.py: new transitions + COMMAND_REQUIRES entries
+- [ ] contract_service.py: build_contract → WAITING_FOR_CONTRACT_APPROVAL, approve_contract, reject_contract
+- [ ] implementation_service.py: implement → WAITING_FOR_PATCH_APPROVAL, approve_patch, reject_patch
+- [ ] db.py: update_patch_status()
+- [ ] cli.py: contract-approve, contract-reject, apply, patch-reject
+- [ ] runtime.py: pause after contract build + implement, auto_approve flag
+- [ ] server.py: 4 new MCP tools
+- [ ] **PHASE 11 GATE**
+
+### Phase 12 — Event Log and harness trace
+
+- [ ] db.py: events table DDL + log_event, get_events, new_event_id
+- [ ] state_machine.py: emit state_transition events in transition()
+- [ ] runtime.py: _timed_service_call wrapper
+- [ ] cli.py: harness trace command
+- [ ] **PHASE 12 GATE**
+
+### Phase 13 — LLM Robustness
+
+- [ ] llm.py: retry loop + _is_retriable, _call split, token tracking
+- [ ] config.py: max_tokens, llm_retries fields
+- [ ] cli.py: config set supports max_tokens, llm_retries
+- [ ] tests/test_llm.py (4 tests)
+- [ ] **PHASE 13 GATE**
+
+### Phase 14 — Policy Engine (optional)
+
+- [ ] harness/policy.py (RiskLevel, PolicyDecision, DECISION_GATES, check_decision_gate, check_patch_risk)
+- [ ] runtime.py: integrate check_decision_gate before auto-approve
+- [ ] **PHASE 14 GATE**
+
 ## Phase Verification Gates
 
 ### Phase 1 Gate
@@ -229,10 +283,11 @@ harness --help
 ## Agent Continuation
 
 To resume building autonomously:
+
 ```
-/loop Continue building the Harness project. Read CLAUDE.md, find the first unchecked [ ] item in Build Progress, implement it per the plan at /home/fionn/.claude/plans/ch-nh-x-c-b-n-ang-eventual-stallman.md and knowledge/ docs, run its verification command, mark [x], continue to next item.
+/loop Continue building the Harness project. Read CLAUDE.md Build Progress, find the first unchecked [ ] phase item, implement it per the plan at /home/fionn/.claude/plans/harness-complete-build-hashed-garden.md, run its GATE command (must pass green), mark [x] in CLAUDE.md, then continue to the next unchecked item. Never skip the GATE. Never auto-apply patches. Never commit without running pytest first.
 ```
 
 Full loop instructions: `knowledge/AGENT_LOOP.md`
-Detailed specs per phase: `/home/fionn/.claude/plans/ch-nh-x-c-b-n-ang-eventual-stallman.md`
+Detailed specs per phase: `/home/fionn/.claude/plans/harness-complete-build-hashed-garden.md`
 Reference docs: `knowledge/`

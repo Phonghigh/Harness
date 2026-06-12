@@ -93,6 +93,7 @@ class Database:
                     scope           TEXT NOT NULL,
                     key             TEXT NOT NULL,
                     value_json      TEXT NOT NULL,
+                    category        TEXT NOT NULL DEFAULT '',
                     source_task_id  TEXT,
                     applied_count   INTEGER NOT NULL DEFAULT 0,
                     last_applied_at TEXT,
@@ -107,6 +108,22 @@ class Database:
                     contract_id  TEXT,
                     metrics_json TEXT NOT NULL,
                     created_at   TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS events (
+                    id            TEXT PRIMARY KEY,
+                    task_id       TEXT NOT NULL,
+                    event_type    TEXT NOT NULL,
+                    from_state    TEXT,
+                    to_state      TEXT,
+                    tool_name     TEXT,
+                    prompt_name   TEXT,
+                    input_hash    TEXT,
+                    output_hash   TEXT,
+                    duration_ms   INTEGER,
+                    metadata_json TEXT,
+                    created_at    TEXT NOT NULL,
                     FOREIGN KEY (task_id) REFERENCES tasks(id)
                 );
             """)
@@ -126,9 +143,11 @@ class Database:
                 conn.execute("ALTER TABLE memory ADD COLUMN applied_count INTEGER NOT NULL DEFAULT 0")
             if "last_applied_at" not in mem_cols:
                 conn.execute("ALTER TABLE memory ADD COLUMN last_applied_at TEXT")
+            if "category" not in mem_cols:
+                conn.execute("ALTER TABLE memory ADD COLUMN category TEXT NOT NULL DEFAULT ''")
 
-            eval_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-            if "evaluations" not in eval_tables:
+            existing_tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "evaluations" not in existing_tables:
                 conn.execute("""
                     CREATE TABLE evaluations (
                         id           TEXT PRIMARY KEY,
@@ -136,6 +155,24 @@ class Database:
                         contract_id  TEXT,
                         metrics_json TEXT NOT NULL,
                         created_at   TEXT NOT NULL,
+                        FOREIGN KEY (task_id) REFERENCES tasks(id)
+                    )
+                """)
+            if "events" not in existing_tables:
+                conn.execute("""
+                    CREATE TABLE events (
+                        id            TEXT PRIMARY KEY,
+                        task_id       TEXT NOT NULL,
+                        event_type    TEXT NOT NULL,
+                        from_state    TEXT,
+                        to_state      TEXT,
+                        tool_name     TEXT,
+                        prompt_name   TEXT,
+                        input_hash    TEXT,
+                        output_hash   TEXT,
+                        duration_ms   INTEGER,
+                        metadata_json TEXT,
+                        created_at    TEXT NOT NULL,
                         FOREIGN KEY (task_id) REFERENCES tasks(id)
                     )
                 """)
@@ -278,6 +315,10 @@ class Database:
                 (contract_id,),
             ).fetchone()
 
+    def update_patch_status(self, patch_id: str, status: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE patches SET status = ? WHERE id = ?", (status, patch_id))
+
     def count_patches(self) -> int:
         with self.connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM patches").fetchone()[0]
@@ -307,18 +348,20 @@ class Database:
     # --- Memory ---
 
     def upsert_memory(self, entry: dict) -> None:
+        entry = {**entry, "category": entry.get("category", "")}
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO memory
-                  (id, type, scope, key, value_json, source_task_id, applied_count,
+                  (id, type, scope, key, value_json, category, source_task_id, applied_count,
                    last_applied_at, created_at, updated_at)
                 VALUES
-                  (:id, :type, :scope, :key, :value_json,
+                  (:id, :type, :scope, :key, :value_json, :category,
                    :source_task_id, :applied_count, :last_applied_at,
                    :created_at, :updated_at)
                 ON CONFLICT(type, scope, key) DO UPDATE SET
                   value_json      = excluded.value_json,
+                  category        = excluded.category,
                   source_task_id  = excluded.source_task_id,
                   updated_at      = excluded.updated_at
                 """,
@@ -329,6 +372,7 @@ class Database:
         self,
         type_filter: str | None = None,
         scope_filter: str | None = None,
+        category_filter: str | None = None,
     ) -> list[sqlite3.Row]:
         conditions: list[str] = []
         params: list = []
@@ -338,6 +382,9 @@ class Database:
         if scope_filter:
             conditions.append("scope = ?")
             params.append(scope_filter)
+        if category_filter:
+            conditions.append("category = ?")
+            params.append(category_filter)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         with self.connect() as conn:
             return conn.execute(
@@ -406,6 +453,33 @@ class Database:
         with self.connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0]
 
+    # --- Events ---
+
+    def log_event(self, event: dict) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO events
+                  (id, task_id, event_type, from_state, to_state, tool_name,
+                   prompt_name, input_hash, output_hash, duration_ms, metadata_json, created_at)
+                VALUES
+                  (:id, :task_id, :event_type, :from_state, :to_state, :tool_name,
+                   :prompt_name, :input_hash, :output_hash, :duration_ms, :metadata_json, :created_at)
+                """,
+                event,
+            )
+
+    def get_events(self, task_id: str) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM events WHERE task_id = ? ORDER BY created_at",
+                (task_id,),
+            ).fetchall()
+
+    def count_events(self) -> int:
+        with self.connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+
     # --- ID generation ---
 
     @staticmethod
@@ -430,3 +504,6 @@ class Database:
 
     def new_evaluation_id(self) -> str:
         return f"E{self.count_evaluations() + 1:03d}"
+
+    def new_event_id(self) -> str:
+        return f"EV{self.count_events() + 1:05d}"

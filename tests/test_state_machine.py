@@ -19,11 +19,23 @@ class TestValidTransitions:
     def test_waiting_to_approved(self):
         validate_transition(TaskStatus.WAITING_FOR_DECISIONS, TaskStatus.DECISIONS_APPROVED)
 
-    def test_approved_to_contract_ready(self):
-        validate_transition(TaskStatus.DECISIONS_APPROVED, TaskStatus.CONTRACT_READY)
+    def test_approved_to_waiting_for_contract_approval(self):
+        validate_transition(TaskStatus.DECISIONS_APPROVED, TaskStatus.WAITING_FOR_CONTRACT_APPROVAL)
 
-    def test_contract_ready_to_implementing(self):
-        validate_transition(TaskStatus.CONTRACT_READY, TaskStatus.IMPLEMENTING)
+    def test_waiting_for_contract_approval_to_contract_ready(self):
+        validate_transition(TaskStatus.WAITING_FOR_CONTRACT_APPROVAL, TaskStatus.CONTRACT_READY)
+
+    def test_waiting_for_contract_approval_can_reject_to_decisions_approved(self):
+        validate_transition(TaskStatus.WAITING_FOR_CONTRACT_APPROVAL, TaskStatus.DECISIONS_APPROVED)
+
+    def test_contract_ready_to_waiting_for_patch_approval(self):
+        validate_transition(TaskStatus.CONTRACT_READY, TaskStatus.WAITING_FOR_PATCH_APPROVAL)
+
+    def test_waiting_for_patch_approval_to_implementing(self):
+        validate_transition(TaskStatus.WAITING_FOR_PATCH_APPROVAL, TaskStatus.IMPLEMENTING)
+
+    def test_waiting_for_patch_approval_can_reject_to_contract_ready(self):
+        validate_transition(TaskStatus.WAITING_FOR_PATCH_APPROVAL, TaskStatus.CONTRACT_READY)
 
     def test_implementing_to_checking(self):
         validate_transition(TaskStatus.IMPLEMENTING, TaskStatus.CHECKING_COMPLIANCE)

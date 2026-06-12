@@ -24,11 +24,11 @@ class TestBuildContractStub:
         assert contract["id"].startswith("C")
         assert contract["task_id"] == task["id"]
 
-    def test_transitions_task_to_contract_ready(self, task, db):
+    def test_transitions_task_to_waiting_for_contract_approval(self, task, db):
         approved_task = _task_at_decisions_approved(task, db)
         build_contract(approved_task, db, llm=None)
         updated = db.get_task(task["id"])
-        assert updated["status"] == TaskStatus.CONTRACT_READY
+        assert updated["status"] == TaskStatus.WAITING_FOR_CONTRACT_APPROVAL
 
     def test_contract_has_allowed_files(self, task, db):
         approved_task = _task_at_decisions_approved(task, db)

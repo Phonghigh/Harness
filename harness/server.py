@@ -21,14 +21,14 @@ from harness.config import HarnessConfig, load_config
 from harness.db import Database, now_iso
 from harness.llm import LLMAdapter, build_adapter
 from harness.schemas.task import TaskStatus
-from harness.services.contract_service import build_contract
+from harness.services.contract_service import approve_contract, build_contract, reject_contract
 from harness.services.decision_service import (
     answer_decision,
     approve_decisions,
     generate_stub_decisions,
     list_decisions,
 )
-from harness.services.implementation_service import implement as run_implement
+from harness.services.implementation_service import approve_patch, implement as run_implement, reject_patch
 from harness.services.memory_service import write_memory
 from harness.services.task_service import create_task, run_interrogate
 from harness.services.validation_service import check_compliance
@@ -70,7 +70,10 @@ def _get_llm() -> LLMAdapter | None:
     )
     if not has_key:
         return None
-    return build_adapter(config.llm_provider, config.llm_model)
+    return build_adapter(
+        config.llm_provider, config.llm_model,
+        max_tokens=config.max_tokens, retries=config.llm_retries,
+    )
 
 
 def _active_task() -> dict | None:
@@ -191,8 +194,39 @@ def harness_build_contract() -> dict:
         "allowed_files": json.loads(c["allowed_files_json"]),
         "forbidden_patterns": json.loads(c["forbidden_json"]),
         "decision_ids": json.loads(c.get("decision_ids_json", "[]")),
-        "next_step": f"harness_implement('{c['id']}')",
+        "next_step": "harness_approve_contract() or harness_reject_contract()",
     }
+
+
+@mcp.tool()
+def harness_approve_contract() -> dict:
+    """Approve the pending contract and advance the task to CONTRACT_READY."""
+    _, _, db = _ctx()
+    task = _active_task()
+    if task is None:
+        return {"error": "No active task."}
+    c = db.get_latest_contract(task["id"])
+    if c is None:
+        return {"error": "No contract found."}
+    try:
+        approve_contract(task, c["id"], db)
+    except Exception as e:
+        return {"error": str(e)}
+    return {"contract_id": c["id"], "status": "approved", "next_step": f"harness_implement('{c['id']}')"}
+
+
+@mcp.tool()
+def harness_reject_contract() -> dict:
+    """Reject the pending contract. Task returns to DECISIONS_APPROVED for rebuild."""
+    _, _, db = _ctx()
+    task = _active_task()
+    if task is None:
+        return {"error": "No active task."}
+    try:
+        reject_contract(task, db)
+    except Exception as e:
+        return {"error": str(e)}
+    return {"status": "rejected", "next_step": "harness_build_contract()"}
 
 
 @mcp.tool()
@@ -228,9 +262,42 @@ def harness_implement(contract_id: str) -> dict:
         "diff_preview": preview,
         "next_step": (
             f"Review the patch at {result['patch_file']}, "
-            f"then: harness_check_compliance('{contract_id}')"
+            "then: harness_approve_patch() or harness_reject_patch()"
         ),
     }
+
+
+@mcp.tool()
+def harness_approve_patch() -> dict:
+    """Approve the generated patch. Task advances to IMPLEMENTING for compliance check."""
+    _, _, db = _ctx()
+    task = _active_task()
+    if task is None:
+        return {"error": "No active task."}
+    try:
+        approve_patch(task, db)
+    except Exception as e:
+        return {"error": str(e)}
+    c = db.get_latest_contract(task["id"])
+    contract_id = c["id"] if c else "unknown"
+    return {"status": "approved", "next_step": f"harness_check_compliance('{contract_id}')"}
+
+
+@mcp.tool()
+def harness_reject_patch() -> dict:
+    """Reject the generated patch. Task returns to CONTRACT_READY for re-implementation."""
+    _, _, db = _ctx()
+    task = _active_task()
+    if task is None:
+        return {"error": "No active task."}
+    c = db.get_latest_contract(task["id"])
+    if c is None:
+        return {"error": "No contract found."}
+    try:
+        reject_patch(task, c["id"], db)
+    except Exception as e:
+        return {"error": str(e)}
+    return {"status": "rejected", "next_step": f"harness_implement('{c['id']}')"}
 
 
 @mcp.tool()

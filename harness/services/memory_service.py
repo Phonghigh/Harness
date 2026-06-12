@@ -101,6 +101,7 @@ def write_memory(task: dict, llm: LLMAdapter, db: Database, config) -> list[dict
             "scope": config.project_name,
             "key": _slugify(mem.lesson),
             "value_json": json.dumps({"lesson": mem.lesson, "context": mem.context}),
+            "category": mem.category,
             "source_task_id": task["id"],
             "applied_count": 0,
             "last_applied_at": None,

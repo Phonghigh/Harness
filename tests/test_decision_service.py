@@ -7,6 +7,7 @@ from harness.schemas.task import TaskStatus
 from harness.services.decision_service import (
     answer_decision,
     approve_decisions,
+    auto_answer_decisions,
     generate_stub_decisions,
     list_decisions,
 )
@@ -71,6 +72,45 @@ class TestApproveDecisions:
         assert all_approved is False
         updated = db.get_task(task["id"])
         assert updated["status"] == TaskStatus.WAITING_FOR_DECISIONS
+
+
+class TestAutoAnswerDecisions:
+    def test_uses_llm_answer_when_valid(self, task, db, mock_llm):
+        refreshed, decisions = _move_to_waiting(task, db)
+        mock_llm.complete.return_value = (
+            '{"selected_answer": "Use DTOs (separate request/response models)", '
+            '"confidence": "high", "rationale": "DTOs are the standard here."}'
+        )
+        answered = auto_answer_decisions(refreshed, decisions, mock_llm, db)
+        assert all(d["status"] == DecisionStatus.ANSWERED for d in answered)
+        assert answered[0]["selected_answer"] == "Use DTOs (separate request/response models)"
+
+    def test_falls_back_to_recommendation_on_llm_error(self, task, db, mock_llm):
+        refreshed, decisions = _move_to_waiting(task, db)
+        mock_llm.complete.side_effect = RuntimeError("network failure")
+        answered = auto_answer_decisions(refreshed, decisions, mock_llm, db)
+        for d in answered:
+            assert d["status"] == DecisionStatus.ANSWERED
+            assert d["selected_answer"] is not None
+
+    def test_falls_back_to_recommendation_on_invalid_json(self, task, db, mock_llm):
+        refreshed, decisions = _move_to_waiting(task, db)
+        mock_llm.complete.return_value = "not valid json at all"
+        answered = auto_answer_decisions(refreshed, decisions, mock_llm, db)
+        for d in answered:
+            assert d["status"] == DecisionStatus.ANSWERED
+
+    def test_skips_already_answered_decisions(self, task, db, mock_llm):
+        refreshed, decisions = _move_to_waiting(task, db)
+        answer_decision(decisions[0]["id"], "pre-answered", refreshed, db)
+        refreshed_again = dict(db.get_task(task["id"]))
+        decisions_refreshed = [dict(db.get_decision(d["id"])) for d in decisions]
+        mock_llm.complete.return_value = (
+            '{"selected_answer": "LLM pick", "confidence": "high", "rationale": "r"}'
+        )
+        auto_answer_decisions(refreshed_again, decisions_refreshed, mock_llm, db)
+        # The first decision was pre-answered — LLM should not have been called for it
+        assert mock_llm.complete.call_count == len(decisions) - 1
 
 
 class TestConflictDetection:

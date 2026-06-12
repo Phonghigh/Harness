@@ -1,8 +1,9 @@
 import json
 from pathlib import Path
+from typing import Annotated
 
 import typer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
 
@@ -11,6 +12,8 @@ class HarnessConfig(BaseModel):
     llm_provider: str
     llm_model: str
     validate_commands: list[str] = []
+    max_tokens: Annotated[int, Field(ge=1)] = 4096
+    llm_retries: Annotated[int, Field(ge=1)] = 3
 
 
 class EnvSettings(BaseSettings):

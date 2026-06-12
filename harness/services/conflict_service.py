@@ -36,7 +36,7 @@ def detect_conflicts_fast(decision: dict, memories: list) -> list[dict]:
     for m in memories:
         try:
             val = json.loads(m["value_json"])
-            mem_category = val.get("category", "") if isinstance(val, dict) else ""
+            mem_category = m.get("category") or _memory_category(m)
             # Only compare within the same category to reduce false positives
             if mem_category and mem_category != category:
                 continue
@@ -70,7 +70,7 @@ def detect_conflicts_llm(
     relevant = [
         m for m in memories
         if m.get("type") in ("project_standard", "architecture_rule", "lesson")
-        or _memory_category(m) == category
+        or (m.get("category") or _memory_category(m)) == category
     ]
     if not relevant:
         return ConflictResult(has_conflict=False)

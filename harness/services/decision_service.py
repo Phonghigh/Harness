@@ -1,12 +1,18 @@
 import json
 
-import typer
+from pydantic import BaseModel
 
 from harness.db import Database, now_iso
 from harness.schemas.decision import DecisionStatus
 from harness.schemas.task import TaskStatus
 from harness.services.conflict_service import ConflictResult, detect_conflicts_fast, detect_conflicts_llm
 from harness.state_machine import assert_command_allowed, transition
+
+
+class _DecisionAnswer(BaseModel):
+    selected_answer: str
+    confidence: str  # "high" | "medium" | "low"
+    rationale: str
 
 STUB_DECISIONS = [
     {
@@ -77,8 +83,7 @@ def answer_decision(decision_id: str, answer: str, task: dict, db: Database) -> 
     assert_command_allowed("answer", TaskStatus(task["status"]))
     dec = db.get_decision(decision_id.upper())
     if dec is None:
-        typer.echo(f"Error: Decision {decision_id} not found.", err=True)
-        raise typer.Exit(1)
+        raise ValueError(f"Decision {decision_id} not found.")
     db.update_decision(dec["id"], {
         "selected_answer": answer,
         "status": DecisionStatus.ANSWERED,
@@ -99,14 +104,9 @@ def approve_decisions(
     for did in decision_ids:
         dec = db.get_decision(did.upper())
         if dec is None:
-            typer.echo(f"Error: Decision {did} not found.", err=True)
-            raise typer.Exit(1)
+            raise ValueError(f"Decision {did} not found.")
         if dec["status"] == DecisionStatus.PENDING:
-            typer.echo(
-                f"Error: Decision {did} has no answer yet. Run 'harness answer {did}' first.",
-                err=True,
-            )
-            raise typer.Exit(1)
+            raise ValueError(f"Decision {did} has no answer yet. Run 'harness answer {did}' first.")
         db.update_decision(dec["id"], {
             "status": DecisionStatus.APPROVED,
             "updated_at": now_iso(),
@@ -127,3 +127,55 @@ def approve_decisions(
         transition(task, TaskStatus.DECISIONS_APPROVED, db)
         return True, all_conflicts
     return False, all_conflicts
+
+
+def auto_answer_decisions(task: dict, decisions: list, llm, db: Database) -> list[dict]:
+    """Use the LLM to auto-answer every pending decision based on the requirement."""
+    from pydantic import ValidationError
+
+    from harness.llm import LLMOutputError, extract_json_block, load_prompt
+    from harness.services.memory_service import inject_project_memory
+
+    project_memory = inject_project_memory(db)
+    template = load_prompt("decision_answerer")
+    parts = template.split("---USER---", 1)
+    system = parts[0].strip()
+    user_template = parts[1].strip()
+
+    answered = []
+    for dec in decisions:
+        if dec["status"] != DecisionStatus.PENDING:
+            answered.append(dec)
+            continue
+
+        options: list[str] = json.loads(dec["options_json"]) if dec["options_json"] else []
+        options_list = "\n".join(f"{i + 1}. {opt}" for i, opt in enumerate(options))
+        recommendation = dec["recommendation"] or (options[0] if options else "No recommendation")
+
+        user = (
+            user_template
+            .replace("{requirement}", task["raw_requirement"])
+            .replace("{project_memory}", project_memory or "(none)")
+            .replace("{category}", dec["category"])
+            .replace("{question}", dec["question"])
+            .replace("{options_list}", options_list)
+            .replace("{recommendation}", recommendation)
+        )
+
+        selected = recommendation
+        raw = ""
+        try:
+            raw = extract_json_block(llm.complete(system, user))
+            parsed = _DecisionAnswer.model_validate_json(raw)
+            selected = parsed.selected_answer
+        except Exception:
+            selected = recommendation
+
+        # refresh task from DB before each answer call
+        refreshed = db.get_active_task()
+        if refreshed:
+            task = dict(refreshed)
+        answer_decision(dec["id"], selected, task, db)
+        answered.append(dict(db.get_decision(dec["id"])))
+
+    return answered

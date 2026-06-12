@@ -36,6 +36,7 @@ Output JSON ONLY. No explanation before or after. No markdown fences.
 - llm_review must analyze semantic intent, not just file names.
 - Rule-based findings (from PHASE 1 FINDINGS below) are already confirmed — do not re-check them, just reference them in llm_review if relevant.
 - Check for: methods added that are not in spec, logic that goes beyond contract description, missing acceptance criteria implementation, semantic drift from approved decisions.
+- CRITICAL: Every violation you report MUST be directly evidenced by a line in the PATCH text above. Quote the exact line. Do NOT report violations from memory, prior conversation, or assumptions about what the patch might contain. If you cannot point to a specific added line (+...) in the patch, do not report it.
 
 # Failure Mode
 If the patch or contract is unreadable, return:

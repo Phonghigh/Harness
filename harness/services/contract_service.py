@@ -45,7 +45,15 @@ def _build_contract_llm(task: dict, db: Database, llm) -> dict:
     raw = extract_json_block(raw_response)
 
     try:
-        spec = ContractSpec.model_validate_json(raw)
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise LLMOutputError(f"LLM returned non-JSON response: {e}") from e
+
+    if "error" in parsed and len(parsed) == 1:
+        raise LLMOutputError(f"Contract builder refused: {parsed['error']}")
+
+    try:
+        spec = ContractSpec.model_validate(parsed)
     except ValidationError as e:
         raise LLMOutputError(f"LLM returned invalid ContractSpec: {e}") from e
 
@@ -58,12 +66,12 @@ def _build_contract_llm(task: dict, db: Database, llm) -> dict:
         "allowed_files_json": json.dumps(allowed_files),
         "forbidden_json": json.dumps(_DEFAULT_FORBIDDEN),
         "spec_json": spec.model_dump_json(),
-        "status": ContractStatus.APPROVED,
+        "status": ContractStatus.DRAFT,
         "decision_ids_json": json.dumps(decision_ids),
         "created_at": now_iso(),
     }
     db.create_contract(contract)
-    transition(task, TaskStatus.CONTRACT_READY, db)
+    transition(task, TaskStatus.WAITING_FOR_CONTRACT_APPROVAL, db)
     return contract
 
 
@@ -85,10 +93,23 @@ def _build_contract_stub(task: dict, db: Database) -> dict:
         "allowed_files_json": json.dumps(["src/main.py"]),
         "forbidden_json": json.dumps(_DEFAULT_FORBIDDEN),
         "spec_json": json.dumps(stub_spec),
-        "status": ContractStatus.APPROVED,
+        "status": ContractStatus.DRAFT,
         "decision_ids_json": json.dumps(decision_ids),
         "created_at": now_iso(),
     }
     db.create_contract(contract)
-    transition(task, TaskStatus.CONTRACT_READY, db)
+    transition(task, TaskStatus.WAITING_FOR_CONTRACT_APPROVAL, db)
     return contract
+
+
+def approve_contract(task: dict, contract_id: str, db: Database) -> None:
+    """Human approves the contract. Task → CONTRACT_READY."""
+    assert_command_allowed("contract_approve", TaskStatus(task["status"]))
+    db.update_contract_status(contract_id, ContractStatus.APPROVED)
+    transition(task, TaskStatus.CONTRACT_READY, db)
+
+
+def reject_contract(task: dict, db: Database) -> None:
+    """Human rejects the contract. Task → DECISIONS_APPROVED to rebuild."""
+    assert_command_allowed("contract_reject", TaskStatus(task["status"]))
+    transition(task, TaskStatus.DECISIONS_APPROVED, db)

@@ -18,7 +18,7 @@ from harness.services.decision_service import (
     list_decisions,
 )
 from harness.services.implementation_service import implement as run_implement
-from harness.services.task_service import create_task, get_active_task_or_exit, run_interrogate
+from harness.services.task_service import create_task, run_interrogate
 from harness.services.validation_service import check_compliance
 from harness.state_machine import (
     WrongStateError,
@@ -44,6 +44,13 @@ def _abort(msg: str) -> None:
     raise typer.Exit(1)
 
 
+def _get_active_task_or_exit(db: Database) -> dict:
+    task = db.get_active_task()
+    if task is None:
+        _abort("No active task. Run 'harness start \"requirement\"' first.")
+    return dict(task)
+
+
 def _get_llm(config: HarnessConfig):
     """Return an LLMAdapter if an API key is available, else None."""
     from harness.config import EnvSettings
@@ -56,7 +63,10 @@ def _get_llm(config: HarnessConfig):
     )
     if not has_key:
         return None
-    return build_adapter(config.llm_provider, config.llm_model)
+    return build_adapter(
+        config.llm_provider, config.llm_model,
+        max_tokens=config.max_tokens, retries=config.llm_retries,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +109,10 @@ def init(
 def start(requirement: str) -> None:
     """Create a new task from a requirement string."""
     _, _, db = _get_ctx()
-    task = create_task(requirement, db)
+    try:
+        task = create_task(requirement, db)
+    except ValueError as e:
+        _abort(str(e))
     typer.echo(f"Task {task['id']} created.")
     typer.echo(f"Title: {task['title']}")
     typer.echo(f"Status: {task['status']}")
@@ -114,7 +127,7 @@ def start(requirement: str) -> None:
 def status() -> None:
     """Show current task state and decision coverage."""
     _, _, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
 
     typer.echo(f"Task {task['id']}: {task['title']} [{task['status']}]")
 
@@ -159,7 +172,7 @@ def status() -> None:
 def interrogate() -> None:
     """Generate decision map for the active task via LLM (or stub if no API key)."""
     _, config, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("interrogate", TaskStatus(task["status"]))
     except WrongStateError as e:
@@ -193,7 +206,7 @@ def interrogate() -> None:
 def decisions() -> None:
     """List all decisions for the active task."""
     _, _, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
     rows = list_decisions(task["id"], db)
 
     if not rows:
@@ -233,7 +246,7 @@ def answer(
 ) -> None:
     """Record an answer for a decision. Omit arguments to enter interactive mode."""
     _, _, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("answer", TaskStatus(task["status"]))
     except WrongStateError as e:
@@ -279,7 +292,7 @@ def approve(
 ) -> None:
     """Approve one or more answered decisions, or --all to approve every answered decision."""
     _, _, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("approve", TaskStatus(task["status"]))
     except WrongStateError as e:
@@ -295,7 +308,10 @@ def approve(
     elif not decision_ids:
         _abort("Provide decision IDs or use --all.")
 
-    all_approved, conflicts = approve_decisions(decision_ids, task, db)
+    try:
+        all_approved, conflicts = approve_decisions(decision_ids, task, db)
+    except ValueError as e:
+        _abort(str(e))
     for did in decision_ids:
         typer.echo(f"Decision {did.upper()} approved.")
 
@@ -320,7 +336,7 @@ def approve(
 def contract() -> None:
     """Build implementation contract from approved decisions via LLM."""
     _, config, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("contract", TaskStatus(task["status"]))
     except WrongStateError as e:
@@ -344,7 +360,9 @@ def contract() -> None:
     for f in allowed:
         typer.echo(f"  {f}")
     typer.echo(f"\nForbidden patterns: {', '.join(forbidden)}")
-    typer.echo(f"\nNext: harness implement {c['id']}")
+    typer.echo(f"\nNext: review the contract, then run:")
+    typer.echo(f"  harness contract-approve   (approve and proceed to implementation)")
+    typer.echo(f"  harness contract-reject    (reject and rebuild from decisions)")
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +373,7 @@ def contract() -> None:
 def implement(contract_id: str) -> None:
     """Generate patch file from contract via LLM (or stub if no API key)."""
     harness_dir, config, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("implement", TaskStatus(task["status"]))
     except WrongStateError as e:
@@ -390,7 +408,7 @@ def implement(contract_id: str) -> None:
             "status": "generated",
             "created_at": now_iso(),
         })
-        transition(task, TaskStatus.IMPLEMENTING, db)
+        transition(task, TaskStatus.WAITING_FOR_PATCH_APPROVAL, db)
         lines = stub_diff.count("\n")
 
     typer.echo(f"Patch saved: {patch_file}")
@@ -418,7 +436,9 @@ def implement(contract_id: str) -> None:
         typer.echo("─" * 60)
     except Exception:
         pass
-    typer.echo(f"\nNext: harness check {contract_id.upper()}")
+    typer.echo(f"\nNext: review the patch, then run:")
+    typer.echo(f"  harness apply              (approve patch → run compliance check)")
+    typer.echo(f"  harness patch-reject       (reject patch → re-implement)")
 
 
 def _make_stub_diff(contract_id: str, allowed_files: list[str]) -> str:
@@ -436,6 +456,86 @@ def _make_stub_diff(contract_id: str, allowed_files: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# harness contract-approve / contract-reject
+# ---------------------------------------------------------------------------
+
+@app.command("contract-approve")
+def contract_approve() -> None:
+    """Approve the pending contract and advance to implementation."""
+    _, _, db = _get_ctx()
+    task = _get_active_task_or_exit(db)
+    try:
+        assert_command_allowed("contract_approve", TaskStatus(task["status"]))
+    except WrongStateError as e:
+        _abort(str(e))
+
+    from harness.services.contract_service import approve_contract
+    c = db.get_latest_contract(task["id"])
+    if c is None:
+        _abort("No contract found.")
+    approve_contract(task, c["id"], db)
+    typer.echo(f"Contract {c['id']} approved. Task → CONTRACT_READY")
+    typer.echo(f"Next: harness implement {c['id']}")
+
+
+@app.command("contract-reject")
+def contract_reject() -> None:
+    """Reject the pending contract. Task returns to DECISIONS_APPROVED for rebuild."""
+    _, _, db = _get_ctx()
+    task = _get_active_task_or_exit(db)
+    try:
+        assert_command_allowed("contract_reject", TaskStatus(task["status"]))
+    except WrongStateError as e:
+        _abort(str(e))
+
+    from harness.services.contract_service import reject_contract
+    reject_contract(task, db)
+    typer.echo("Contract rejected. Task → DECISIONS_APPROVED")
+    typer.echo("Next: harness contract  (rebuild contract from decisions)")
+
+
+# ---------------------------------------------------------------------------
+# harness apply / harness patch-reject
+# ---------------------------------------------------------------------------
+
+@app.command()
+def apply() -> None:
+    """Approve the generated patch and advance to compliance checking."""
+    _, _, db = _get_ctx()
+    task = _get_active_task_or_exit(db)
+    try:
+        assert_command_allowed("patch_approve", TaskStatus(task["status"]))
+    except WrongStateError as e:
+        _abort(str(e))
+
+    from harness.services.implementation_service import approve_patch
+    c = db.get_latest_contract(task["id"])
+    approve_patch(task, db)
+    typer.echo("Patch approved. Task → IMPLEMENTING")
+    if c:
+        typer.echo(f"Next: harness check {c['id']}")
+
+
+@app.command("patch-reject")
+def patch_reject() -> None:
+    """Reject the generated patch. Task returns to CONTRACT_READY for re-implementation."""
+    _, _, db = _get_ctx()
+    task = _get_active_task_or_exit(db)
+    try:
+        assert_command_allowed("patch_reject", TaskStatus(task["status"]))
+    except WrongStateError as e:
+        _abort(str(e))
+
+    from harness.services.implementation_service import reject_patch
+    c = db.get_latest_contract(task["id"])
+    if c is None:
+        _abort("No contract found.")
+    reject_patch(task, c["id"], db)
+    typer.echo("Patch rejected. Task → CONTRACT_READY")
+    typer.echo(f"Next: harness implement {c['id']}  (re-generate patch)")
+
+
+# ---------------------------------------------------------------------------
 # harness check
 # ---------------------------------------------------------------------------
 
@@ -443,7 +543,7 @@ def _make_stub_diff(contract_id: str, allowed_files: list[str]) -> str:
 def check(contract_id: str) -> None:
     """Run compliance check on patch (rule-based + LLM semantic review)."""
     harness_dir, config, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("check", TaskStatus(task["status"]))
     except WrongStateError as e:
@@ -526,7 +626,7 @@ def check(contract_id: str) -> None:
 def validate() -> None:
     """Run validation commands from config (empty list = auto-pass)."""
     _, config, db = _get_ctx()
-    task = get_active_task_or_exit(db)
+    task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("validate", TaskStatus(task["status"]))
     except WrongStateError as e:
@@ -619,6 +719,69 @@ def remember() -> None:
         typer.echo(f"\nSaved {len(stub_memories)} memories:")
         for mem_type, key, value in stub_memories:
             typer.echo(f"  {mem_type:<20} {key:<30} \"{value}\"")
+
+
+# ---------------------------------------------------------------------------
+# harness run  (full auto-loop via runtime)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def run(requirement: str) -> None:
+    """Run the full harness workflow end-to-end automatically (requires API key)."""
+    harness_dir, config, db = _get_ctx()
+    llm = _get_llm(config)
+
+    try:
+        task = create_task(requirement, db)
+    except ValueError as e:
+        _abort(str(e))
+
+    typer.echo(f"Task {task['id']}: {task['title']}")
+    typer.echo("Running...")
+
+    from harness.runtime import run_until_pause
+    result = run_until_pause(task["id"], harness_dir, config, db, llm)
+    _render_runtime_result(result)
+
+
+def _render_runtime_result(result) -> None:
+    """Rich-formatted display of a RuntimeResult."""
+    from harness.runtime import PauseReason
+    paused_at = result.paused_at
+
+    if paused_at == PauseReason.DONE:
+        typer.echo(f"\nDone. Task {result.task_id} complete.")
+        if result.patch_file:
+            typer.echo(f"Patch: {result.patch_file}")
+            typer.echo(f"Apply with: git apply {result.patch_file}")
+    elif paused_at == PauseReason.PATCH_APPROVAL_REQUIRED:
+        typer.echo(f"\nPaused: patch ready for review.")
+        typer.echo(result.message)
+        if result.contract_id:
+            typer.echo(f"Next: harness check {result.contract_id}")
+    elif paused_at == PauseReason.HUMAN_DECISIONS_REQUIRED:
+        typer.echo(f"\nPaused: human decisions required.")
+        typer.echo(result.message)
+        if result.conflicts:
+            typer.echo("\n[WARNING] Conflicts with project memory:")
+            for c in result.conflicts:
+                typer.echo(f"  ⚠  {c.get('warning', '')}")
+        typer.echo("Next: harness decisions → harness answer → harness approve")
+    elif paused_at == PauseReason.COMPLIANCE_FAILED:
+        typer.echo(f"\nPaused: compliance failed after {result.compliance_retries} attempt(s).")
+        typer.echo(result.message)
+    elif paused_at == PauseReason.VALIDATION_FAILED:
+        typer.echo(f"\nPaused: validation failed.")
+        typer.echo(result.message)
+    elif paused_at == PauseReason.LLM_UNAVAILABLE:
+        typer.echo(f"\nPaused: LLM unavailable.")
+        typer.echo(result.message)
+    else:
+        typer.echo(f"\nPaused: {paused_at}")
+        typer.echo(result.message)
+        if result.error:
+            typer.echo(f"Error: {result.error}")
 
 
 # ---------------------------------------------------------------------------
@@ -780,19 +943,26 @@ def memory_delete(memory_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 _SETTABLE_FIELDS = {"llm_provider", "llm_model", "project_name"}
+_INT_FIELDS = {"max_tokens", "llm_retries"}
 
 
 @config_app.command("set")
 def config_set(key: str, value: str) -> None:
-    """Set a config value (llm_provider, llm_model, project_name, validate_commands)."""
+    """Set a config value (llm_provider, llm_model, project_name, max_tokens, llm_retries, validate_commands)."""
     harness_dir, config, _ = _get_ctx()
 
     if key == "validate_commands":
         config.validate_commands = [v.strip() for v in value.split(",") if v.strip()]
+    elif key in _INT_FIELDS:
+        try:
+            config = config.model_copy(update={key: int(value)})
+        except ValueError:
+            _abort(f"'{key}' must be an integer, got: {value!r}")
     elif key in _SETTABLE_FIELDS:
         config = config.model_copy(update={key: value})
     else:
-        _abort(f"Unknown config key '{key}'. Settable: {', '.join(sorted(_SETTABLE_FIELDS | {'validate_commands'}))}")
+        all_keys = ", ".join(sorted(_SETTABLE_FIELDS | _INT_FIELDS | {"validate_commands"}))
+        _abort(f"Unknown config key '{key}'. Settable: {all_keys}")
 
     save_config(harness_dir, config)
     typer.echo(f"Config updated: {key} = {value}")
@@ -808,6 +978,55 @@ def serve() -> None:
     from harness.server import run as run_server
     typer.echo("Starting Harness MCP server (stdio)...", err=True)
     run_server()
+
+
+# ---------------------------------------------------------------------------
+# harness trace
+# ---------------------------------------------------------------------------
+
+@app.command()
+def trace(
+    task_id: Annotated[Optional[str], typer.Argument(help="Task ID (default: latest)")] = None,
+) -> None:
+    """Show event trace (state transitions + LLM calls) for a task."""
+    _, _, db = _get_ctx()
+
+    if task_id:
+        task_row = db.get_task(task_id.upper())
+    else:
+        task_row = db.get_latest_task()
+
+    if task_row is None:
+        _abort("No task found.")
+
+    task_row = dict(task_row)
+    events = db.get_events(task_row["id"])
+
+    if not events:
+        typer.echo(f"No events recorded for task {task_row['id']}.")
+        typer.echo("(Events are recorded from future transitions — run harness start to begin.)")
+        return
+
+    typer.echo(f"Event trace for task {task_row['id']}: {task_row['title']}\n")
+    table = Table(show_header=True)
+    table.add_column("Time", style="dim", width=12)
+    table.add_column("Type", width=18)
+    table.add_column("From → To / Prompt", width=45)
+    table.add_column("ms", justify="right", width=6)
+
+    for ev in events:
+        ts = ev["created_at"][11:19] if ev["created_at"] else ""
+        ev_type = ev["event_type"] or ""
+        if ev_type == "state_transition":
+            detail = f"{ev['from_state']} → {ev['to_state']}"
+        elif ev_type == "llm_call":
+            detail = ev["prompt_name"] or ""
+        else:
+            detail = ev["tool_name"] or ""
+        ms_val = str(ev["duration_ms"]) if ev["duration_ms"] is not None else ""
+        table.add_row(ts, ev_type, detail, ms_val)
+
+    rprint(table)
 
 
 # ---------------------------------------------------------------------------
