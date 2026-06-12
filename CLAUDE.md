@@ -203,15 +203,15 @@ cli.py           ← all services + rich
 
 Full spec: `plans/phase15_claude_code_integration.md`
 
-- [ ] harness/config.py: `use_claude_code: bool = True`, `claude_code_timeout: int = 300`
-- [ ] harness/services/claude_executor.py: 5 functions (is_claude_available, build_impl_prompt, run_claude_implement, capture_diff_staged, reset_allowed_files)
-- [ ] harness/services/implementation_service.py: implement() + reimplement() dispatch to Claude Code or LLM
-- [ ] harness/runtime.py: pass `config=config` to implement() and reimplement()
-- [ ] harness/cli.py: config-set handles use_claude_code/claude_code_timeout, implement shows mode, apply shows mode-aware message
-- [ ] harness/server.py: harness_implement tool passes config=config
-- [ ] harness/app.py: mode badge, mode-aware apply button, config toggles
-- [ ] tests/test_claude_executor.py: 13 tests
-- [ ] **PHASE 15 GATE**
+- [x] harness/config.py: `use_claude_code: bool = True`, `claude_code_timeout: int = 300`
+- [x] harness/services/claude_executor.py: 5 functions (is_claude_available, build_impl_prompt, run_claude_implement, capture_diff_staged, reset_allowed_files)
+- [x] harness/services/implementation_service.py: implement() + reimplement() dispatch to Claude Code or LLM
+- [x] harness/runtime.py: pass `config=config` to implement() and reimplement()
+- [x] harness/cli.py: config-set handles use_claude_code/claude_code_timeout, implement shows mode, apply shows mode-aware message
+- [x] harness/server.py: harness_implement tool passes config=config
+- [x] harness/app.py: mode badge, mode-aware apply button, config toggles
+- [x] tests/test_claude_executor.py: 13 tests
+- [x] **PHASE 15 GATE**
 
 ```bash
 python -c "from harness.services.claude_executor import is_claude_available; print('claude:', is_claude_available())"

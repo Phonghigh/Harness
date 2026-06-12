@@ -153,15 +153,15 @@ Rules:
 - After all 9 items are checked, print "Phase 15 COMPLETE"
 ```
 
-- [ ] Phase 1 — `config.py`: `use_claude_code`, `claude_code_timeout`
-- [ ] Phase 2 — `harness/services/claude_executor.py` (new file, 5 functions)
-- [ ] Phase 3 — `implementation_service.py`: dispatch + reimplement update
-- [ ] Phase 4 — `runtime.py`: pass `config=` to implement/reimplement
-- [ ] Phase 5 — `cli.py`: config-set, implement display, apply display
-- [ ] Phase 6 — `server.py`: pass `config` to `harness_implement` tool
-- [ ] Phase 7 — `app.py`: Claude Code mode badge, apply button, config toggles
-- [ ] Phase 8 — `tests/test_claude_executor.py` (13 test cases)
-- [ ] Phase 9 — `CLAUDE.md`: Phase 15 entry + mark complete
+- [x] Phase 1 — `config.py`: `use_claude_code`, `claude_code_timeout`
+- [x] Phase 2 — `harness/services/claude_executor.py` (new file, 5 functions)
+- [x] Phase 3 — `implementation_service.py`: dispatch + reimplement update
+- [x] Phase 4 — `runtime.py`: pass `config=` to implement/reimplement
+- [x] Phase 5 — `cli.py`: config-set, implement display, apply display
+- [x] Phase 6 — `server.py`: pass `config` to `harness_implement` tool
+- [x] Phase 7 — `app.py`: Claude Code mode badge, apply button, config toggles
+- [x] Phase 8 — `tests/test_claude_executor.py` (13 test cases)
+- [x] Phase 9 — `CLAUDE.md`: Phase 15 entry + mark complete
 
 ---
 

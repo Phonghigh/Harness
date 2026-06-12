@@ -194,7 +194,7 @@ def run_until_pause(
                 contract = db.get_latest_contract(task_id)
                 if contract:
                     contract = dict(contract)
-            implement(task, contract, harness_dir, llm, db)
+            implement(task, contract, harness_dir, llm, db, config=config)
             continue
 
         # --- WAITING_FOR_PATCH_APPROVAL: pause so human can review the patch ---
@@ -262,7 +262,7 @@ def run_until_pause(
 
             # Re-generate patch and loop back
             task = dict(db.get_task(task_id))
-            reimplement(task, contract, harness_dir, llm, db, compliance_summary=report.summary)
+            reimplement(task, contract, harness_dir, llm, db, compliance_summary=report.summary, config=config)
             continue
 
         # --- CHECKING_COMPLIANCE: should resolve quickly (transition handled by service) ---

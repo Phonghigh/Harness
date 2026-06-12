@@ -388,11 +388,19 @@ def implement(contract_id: str) -> None:
 
     llm = _get_llm(config)
     if llm is not None:
-        typer.echo(f"Generating patch for {contract_id.upper()} via LLM...")
+        from harness.services.claude_executor import is_claude_available
+        if config.use_claude_code and is_claude_available():
+            typer.echo(typer.style("Syntax Executor: Claude Code CLI", fg=typer.colors.CYAN))
+        elif config.use_claude_code:
+            typer.echo(typer.style("Claude Code not found in PATH — falling back to LLM", fg=typer.colors.YELLOW))
+        else:
+            typer.echo(typer.style("Syntax Executor: LLM (claude_code disabled)", fg=typer.colors.YELLOW))
         try:
-            result = run_implement(task, dict(c), harness_dir, llm, db)
+            result = run_implement(task, dict(c), harness_dir, llm, db, config=config)
             patch_file = result["patch_file"]
             lines = result["lines"]
+            mode_label = "Claude Code" if result.get("mode") == "claude_code" else "LLM"
+            typer.echo(typer.style(f"Patch generated via {mode_label}", fg=typer.colors.GREEN))
         except Exception as e:
             _abort(f"Implementation failed: {e}")
     else:
@@ -504,17 +512,26 @@ def contract_reject() -> None:
 @app.command()
 def apply() -> None:
     """Approve the generated patch and advance to compliance checking."""
-    _, _, db = _get_ctx()
+    harness_dir, config, db = _get_ctx()
     task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("patch_approve", TaskStatus(task["status"]))
     except WrongStateError as e:
         _abort(str(e))
 
+    from harness.services.claude_executor import is_claude_available
     from harness.services.implementation_service import approve_patch
     c = db.get_latest_contract(task["id"])
     approve_patch(task, db)
-    typer.echo("Patch approved. Task → IMPLEMENTING")
+    typer.echo(typer.style("Patch approved.", fg=typer.colors.GREEN))
+    if config.use_claude_code and is_claude_available():
+        typer.echo("Files are already written to disk by Claude Code.")
+        typer.echo("Running compliance check next...")
+    else:
+        if c:
+            patch_path = harness_dir / "patches" / f"{c['id']}.diff"
+            typer.echo(typer.style("Apply the patch manually:", fg=typer.colors.YELLOW))
+            typer.echo(f"  git apply {patch_path}")
     if c:
         typer.echo(f"Next: harness check {c['id']}")
 
@@ -946,12 +963,13 @@ def memory_delete(memory_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 _SETTABLE_FIELDS = {"llm_provider", "llm_model", "project_name"}
-_INT_FIELDS = {"max_tokens", "llm_retries", "context_max_depth"}
+_INT_FIELDS = {"max_tokens", "llm_retries", "context_max_depth", "claude_code_timeout"}
+_BOOL_FIELDS = {"use_claude_code"}
 
 
 @config_app.command("set")
 def config_set(key: str, value: str) -> None:
-    """Set a config value (llm_provider, llm_model, project_name, max_tokens, llm_retries, validate_commands)."""
+    """Set a config value (llm_provider, llm_model, project_name, max_tokens, llm_retries, use_claude_code, claude_code_timeout, validate_commands)."""
     harness_dir, config, _ = _get_ctx()
 
     if key == "validate_commands":
@@ -960,11 +978,15 @@ def config_set(key: str, value: str) -> None:
         try:
             config = config.model_copy(update={key: int(value)})
         except ValueError:
-            _abort(f"'{key}' must be an integer, got: {value!r}")
+            _abort(f"'{key}' requires an integer value, got: {value!r}")
+    elif key in _BOOL_FIELDS:
+        if value.lower() not in ("true", "false", "1", "0", "yes", "no"):
+            _abort(f"'{key}' requires true or false, got: {value!r}")
+        config = config.model_copy(update={key: value.lower() in ("true", "1", "yes")})
     elif key in _SETTABLE_FIELDS:
         config = config.model_copy(update={key: value})
     else:
-        all_keys = ", ".join(sorted(_SETTABLE_FIELDS | _INT_FIELDS | {"validate_commands"}))
+        all_keys = ", ".join(sorted(_SETTABLE_FIELDS | _INT_FIELDS | _BOOL_FIELDS | {"validate_commands"}))
         _abort(f"Unknown config key '{key}'. Settable: {all_keys}")
 
     save_config(harness_dir, config)
