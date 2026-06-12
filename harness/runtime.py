@@ -1,13 +1,47 @@
 import subprocess
+import time
 from enum import StrEnum
 from pathlib import Path
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
 from harness.config import HarnessConfig
-from harness.db import Database
+from harness.db import Database, now_iso
 from harness.llm import LLMAdapter
 from harness.schemas.task import TaskStatus
+
+
+def _timed_service_call(
+    task_id: str,
+    tool_name: str,
+    db: Database,
+    fn: Callable,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Call fn(*args, **kwargs), log duration as a service_call event, return result."""
+    start = time.monotonic()
+    result = fn(*args, **kwargs)
+    duration_ms = int((time.monotonic() - start) * 1000)
+    try:
+        db.log_event({
+            "id": db.new_event_id(),
+            "task_id": task_id,
+            "event_type": "service_call",
+            "from_state": None,
+            "to_state": None,
+            "tool_name": tool_name,
+            "prompt_name": None,
+            "input_hash": None,
+            "output_hash": None,
+            "duration_ms": duration_ms,
+            "metadata_json": None,
+            "created_at": now_iso(),
+        })
+    except Exception:
+        pass
+    return result
 
 
 class PauseReason(StrEnum):
@@ -87,6 +121,19 @@ def run_until_pause(
             if auto_answer:
                 pending = [dict(d) for d in decisions if d["status"] == "pending"]
                 if pending:
+                    # Policy gate: skip auto-answer for HIGH-risk decision categories
+                    from harness.policy import check_decision_gate
+                    high_risk = [d for d in pending if not check_decision_gate(d).allowed]
+                    if high_risk:
+                        return RuntimeResult(
+                            task_id=task_id,
+                            final_status=status.value,
+                            paused_at=PauseReason.HUMAN_DECISIONS_REQUIRED,
+                            message=(
+                                f"{len(high_risk)} decision(s) require human input "
+                                "(policy: HIGH-risk category)."
+                            ),
+                        )
                     auto_answer_decisions(task, [dict(d) for d in decisions], llm, db)
                     task = dict(db.get_task(task_id))
 
