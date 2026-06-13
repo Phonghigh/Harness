@@ -147,51 +147,51 @@ cli.py           ← all services + rich
 
 ### Phase 8 — Land Uncommitted Changes
 
-- [ ] Verify pytest green + no `import typer` in services
-- [ ] Commit: cli.py run, auto_answer_decisions, decision_answerer.md, compliance_checker.md, contract two-step parse
-- [ ] **PHASE 8 GATE**
+- [x] Verify pytest green + no `import typer` in services
+- [x] Commit: cli.py run, auto_answer_decisions, decision_answerer.md, compliance_checker.md, contract two-step parse
+- [x] **PHASE 8 GATE**
 
 ### Phase 9 — Memory Category Column (already implemented)
 
-- [ ] Verify gate command passes (category column, upsert, list_memory, conflict_service)
-- [ ] **PHASE 9 GATE**
+- [x] Verify gate command passes (category column, upsert, list_memory, conflict_service)
+- [x] **PHASE 9 GATE**
 
 ### Phase 10 — Agent Runtime
 
-- [ ] harness/runtime.py (PauseReason, RuntimeResult, run_until_pause)
-- [ ] implementation_service.py: reimplement()
-- [ ] state_machine.py: COMMAND_REQUIRES["reimplement"]
-- [ ] cli.py: slim run command + _render_runtime_result()
-- [ ] tests/test_runtime.py (4 tests)
-- [ ] **PHASE 10 GATE**
+- [x] harness/runtime.py (PauseReason, RuntimeResult, run_until_pause)
+- [x] implementation_service.py: reimplement(h)
+- [x] state_machine.py: COMMAND_REQUIRES["reimplement"]
+- [x] cli.py: slim run command + _render_runtime_result()
+- [x] tests/test_runtime.py (4 tests)
+- [x] **PHASE 10 GATE**
 
 ### Phase 11 — Contract and Patch Lifecycle Gates
 
-- [ ] schemas/task.py: WAITING_FOR_CONTRACT_APPROVAL, WAITING_FOR_PATCH_APPROVAL
-- [ ] state_machine.py: new transitions + COMMAND_REQUIRES entries
-- [ ] contract_service.py: build_contract → WAITING_FOR_CONTRACT_APPROVAL, approve_contract, reject_contract
-- [ ] implementation_service.py: implement → WAITING_FOR_PATCH_APPROVAL, approve_patch, reject_patch
-- [ ] db.py: update_patch_status()
-- [ ] cli.py: contract-approve, contract-reject, apply, patch-reject
-- [ ] runtime.py: pause after contract build + implement, auto_approve flag
-- [ ] server.py: 4 new MCP tools
-- [ ] **PHASE 11 GATE**
+- [x] schemas/task.py: WAITING_FOR_CONTRACT_APPROVAL, WAITING_FOR_PATCH_APPROVAL
+- [x] state_machine.py: new transitions + COMMAND_REQUIRES entries
+- [x] contract_service.py: build_contract → WAITING_FOR_CONTRACT_APPROVAL, approve_contract, reject_contract
+- [x] implementation_service.py: implement → WAITING_FOR_PATCH_APPROVAL, approve_patch, reject_patch
+- [x] db.py: update_patch_status()
+- [x] cli.py: contract-approve, contract-reject, apply, patch-reject
+- [x] runtime.py: pause after contract build + implement, auto_approve flag
+- [x] server.py: 4 new MCP tools
+- [x] **PHASE 11 GATE**
 
 ### Phase 12 — Event Log and harness trace
 
-- [ ] db.py: events table DDL + log_event, get_events, new_event_id
-- [ ] state_machine.py: emit state_transition events in transition()
-- [ ] runtime.py: _timed_service_call wrapper
-- [ ] cli.py: harness trace command
-- [ ] **PHASE 12 GATE**
+- [x] db.py: events table DDL + log_event, get_events, new_event_id
+- [x] state_machine.py: emit state_transition events in transition()
+- [x] runtime.py: _timed_service_call wrapper
+- [x] cli.py: harness trace command
+- [x] **PHASE 12 GATE**
 
 ### Phase 13 — LLM Robustness
 
-- [ ] llm.py: retry loop + _is_retriable, _call split, token tracking
-- [ ] config.py: max_tokens, llm_retries fields
-- [ ] cli.py: config set supports max_tokens, llm_retries
-- [ ] tests/test_llm.py (4 tests)
-- [ ] **PHASE 13 GATE**
+- [x] llm.py: retry loop + _is_retriable, _call split, token tracking
+- [x] config.py: max_tokens, llm_retries fields
+- [x] cli.py: config set supports max_tokens, llm_retries
+- [x] tests/test_llm.py (4 tests)
+- [x] **PHASE 13 GATE**
 
 ### Phase 14 — Policy Engine (optional)
 
@@ -203,15 +203,15 @@ cli.py           ← all services + rich
 
 Full spec: `plans/phase15_claude_code_integration.md`
 
-- [ ] harness/config.py: `use_claude_code: bool = True`, `claude_code_timeout: int = 300`
-- [ ] harness/services/claude_executor.py: 5 functions (is_claude_available, build_impl_prompt, run_claude_implement, capture_diff_staged, reset_allowed_files)
-- [ ] harness/services/implementation_service.py: implement() + reimplement() dispatch to Claude Code or LLM
-- [ ] harness/runtime.py: pass `config=config` to implement() and reimplement()
-- [ ] harness/cli.py: config-set handles use_claude_code/claude_code_timeout, implement shows mode, apply shows mode-aware message
-- [ ] harness/server.py: harness_implement tool passes config=config
-- [ ] harness/app.py: mode badge, mode-aware apply button, config toggles
-- [ ] tests/test_claude_executor.py: 13 tests
-- [ ] **PHASE 15 GATE**
+- [x] harness/config.py: `use_claude_code: bool = True`, `claude_code_timeout: int = 300`
+- [x] harness/services/claude_executor.py: 5 functions (is_claude_available, build_impl_prompt, run_claude_implement, capture_diff_staged, reset_allowed_files)
+- [x] harness/services/implementation_service.py: implement() + reimplement() dispatch to Claude Code or LLM
+- [x] harness/runtime.py: pass `config=config` to implement() and reimplement()
+- [x] harness/cli.py: config-set handles use_claude_code/claude_code_timeout, implement shows mode, apply shows mode-aware message
+- [x] harness/server.py: harness_implement tool passes config=config
+- [x] harness/app.py: mode badge, mode-aware apply button, config toggles
+- [x] tests/test_claude_executor.py: 13 tests
+- [x] **PHASE 15 GATE**
 
 ```bash
 python -c "from harness.services.claude_executor import is_claude_available; print('claude:', is_claude_available())"

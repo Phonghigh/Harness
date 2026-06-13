@@ -4,6 +4,13 @@ from pathlib import Path
 from harness.db import Database, now_iso
 from harness.llm import LLMAdapter, LLMOutputError, extract_json_block, load_prompt
 from harness.schemas.task import TaskStatus
+from harness.services.claude_executor import (
+    build_impl_prompt,
+    capture_diff_staged,
+    is_claude_available,
+    reset_allowed_files,
+    run_claude_implement,
+)
 from harness.state_machine import assert_command_allowed, transition
 
 
@@ -71,11 +78,42 @@ def implement(
     harness_dir: Path,
     llm: LLMAdapter,
     db: Database,
+    config=None,
 ) -> dict:
     assert_command_allowed("implement", TaskStatus(task["status"]))
+    project_root = harness_dir.parent
 
-    file_contents, contract_data = _prepare_impl_context(contract, harness_dir.parent)
-    diff_text = _call_syntax_executor(contract_data, file_contents, llm)
+    use_cc = (
+        config is not None
+        and getattr(config, "use_claude_code", False)
+        and is_claude_available()
+    )
+
+    if use_cc:
+        allowed_files = json.loads(contract["allowed_files_json"])
+        contract_data = {
+            "id": contract["id"],
+            "scope": contract["scope"],
+            "allowed_files": allowed_files,
+            "forbidden": json.loads(contract["forbidden_json"]),
+            "spec": json.loads(contract["spec_json"]),
+        }
+        prompt = build_impl_prompt(contract_data)
+        timeout = getattr(config, "claude_code_timeout", 300)
+
+        success, output = run_claude_implement(prompt, project_root, timeout)
+        if not success:
+            raise LLMOutputError(f"Claude Code failed:\n{output[:2000]}")
+
+        diff_text = capture_diff_staged(project_root, allowed_files)
+        if not diff_text.strip():
+            raise LLMOutputError(
+                "Claude Code ran successfully but produced no file changes. "
+                f"Claude output:\n{output[:1000]}"
+            )
+    else:
+        file_contents, contract_data = _prepare_impl_context(contract, project_root)
+        diff_text = _call_syntax_executor(contract_data, file_contents, llm)
 
     patches_dir = harness_dir / "patches"
     patches_dir.mkdir(exist_ok=True)
@@ -97,6 +135,7 @@ def implement(
         "patch_id": patch_id,
         "patch_file": str(patch_file),
         "lines": diff_text.count("\n"),
+        "mode": "claude_code" if use_cc else "llm",
     }
 
 
@@ -122,15 +161,45 @@ def reimplement(
     llm: LLMAdapter,
     db: Database,
     compliance_summary: str = "",
+    config=None,
 ) -> dict:
     """Re-generate patch when already in IMPLEMENTING state (compliance retry)."""
     assert_command_allowed("reimplement", TaskStatus(task["status"]))
+    project_root = harness_dir.parent
 
-    file_contents, contract_data = _prepare_impl_context(contract, harness_dir.parent)
-    if compliance_summary:
-        contract_data["compliance_feedback"] = compliance_summary
+    use_cc = (
+        config is not None
+        and getattr(config, "use_claude_code", False)
+        and is_claude_available()
+    )
 
-    diff_text = _call_syntax_executor(contract_data, file_contents, llm)
+    if use_cc:
+        allowed_files = json.loads(contract["allowed_files_json"])
+        contract_data = {
+            "id": contract["id"],
+            "scope": contract["scope"],
+            "allowed_files": allowed_files,
+            "forbidden": json.loads(contract["forbidden_json"]),
+            "spec": json.loads(contract["spec_json"]),
+        }
+
+        reset_allowed_files(project_root, allowed_files)
+
+        prompt = build_impl_prompt(contract_data, compliance_feedback=compliance_summary)
+        timeout = getattr(config, "claude_code_timeout", 300)
+
+        success, output = run_claude_implement(prompt, project_root, timeout)
+        if not success:
+            raise LLMOutputError(f"Claude Code failed on reimplement:\n{output[:2000]}")
+
+        diff_text = capture_diff_staged(project_root, allowed_files)
+        if not diff_text.strip():
+            raise LLMOutputError("Claude Code produced no changes on reimplement")
+    else:
+        file_contents, contract_data = _prepare_impl_context(contract, project_root)
+        if compliance_summary:
+            contract_data["compliance_feedback"] = compliance_summary
+        diff_text = _call_syntax_executor(contract_data, file_contents, llm)
 
     patches_dir = harness_dir / "patches"
     patches_dir.mkdir(exist_ok=True)
@@ -150,4 +219,5 @@ def reimplement(
         "patch_id": patch_id,
         "patch_file": str(patch_file),
         "lines": diff_text.count("\n"),
+        "mode": "claude_code" if use_cc else "llm",
     }

@@ -385,11 +385,19 @@ def implement(contract_id: str) -> None:
 
     llm = _get_llm(config)
     if llm is not None:
-        typer.echo(f"Generating patch for {contract_id.upper()} via LLM...")
+        from harness.services.claude_executor import is_claude_available
+        if config.use_claude_code and is_claude_available():
+            typer.echo(f"Syntax Executor: Claude Code CLI")
+        elif config.use_claude_code:
+            typer.echo(f"Claude Code not found in PATH — falling back to LLM")
+        else:
+            typer.echo(f"Syntax Executor: LLM (claude_code disabled)")
         try:
-            result = run_implement(task, dict(c), harness_dir, llm, db)
+            result = run_implement(task, dict(c), harness_dir, llm, db, config=config)
             patch_file = result["patch_file"]
             lines = result["lines"]
+            mode_label = "Claude Code" if result.get("mode") == "claude_code" else "LLM"
+            typer.echo(f"Patch generated via {mode_label}")
         except Exception as e:
             _abort(f"Implementation failed: {e}")
     else:
@@ -501,7 +509,7 @@ def contract_reject() -> None:
 @app.command()
 def apply() -> None:
     """Approve the generated patch and advance to compliance checking."""
-    _, _, db = _get_ctx()
+    harness_dir, config, db = _get_ctx()
     task = _get_active_task_or_exit(db)
     try:
         assert_command_allowed("patch_approve", TaskStatus(task["status"]))
@@ -509,11 +517,19 @@ def apply() -> None:
         _abort(str(e))
 
     from harness.services.implementation_service import approve_patch
+    from harness.services.claude_executor import is_claude_available
     c = db.get_latest_contract(task["id"])
     approve_patch(task, db)
     typer.echo("Patch approved. Task → IMPLEMENTING")
-    if c:
-        typer.echo(f"Next: harness check {c['id']}")
+    if config.use_claude_code and is_claude_available():
+        typer.echo("Files are already written to disk by Claude Code.")
+        if c:
+            typer.echo(f"Next: harness check {c['id']}")
+    else:
+        if c:
+            patch_path = harness_dir / "patches" / f"{c['id']}.diff"
+            typer.echo(f"Apply the patch manually: git apply {patch_path}")
+            typer.echo(f"Then run: harness check {c['id']}")
 
 
 @app.command("patch-reject")
@@ -943,12 +959,13 @@ def memory_delete(memory_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 _SETTABLE_FIELDS = {"llm_provider", "llm_model", "project_name"}
-_INT_FIELDS = {"max_tokens", "llm_retries", "context_max_depth"}
+_INT_FIELDS = {"max_tokens", "llm_retries", "context_max_depth", "claude_code_timeout"}
+_BOOL_FIELDS = {"use_claude_code"}
 
 
 @config_app.command("set")
 def config_set(key: str, value: str) -> None:
-    """Set a config value (llm_provider, llm_model, project_name, max_tokens, llm_retries, validate_commands)."""
+    """Set a config value (llm_provider, llm_model, project_name, max_tokens, llm_retries, use_claude_code, validate_commands)."""
     harness_dir, config, _ = _get_ctx()
 
     if key == "validate_commands":
@@ -958,10 +975,14 @@ def config_set(key: str, value: str) -> None:
             config = config.model_copy(update={key: int(value)})
         except ValueError:
             _abort(f"'{key}' must be an integer, got: {value!r}")
+    elif key in _BOOL_FIELDS:
+        if value.lower() not in ("true", "false", "1", "0", "yes", "no"):
+            _abort(f"'{key}' requires true or false, got: {value!r}")
+        config = config.model_copy(update={key: value.lower() in ("true", "1", "yes")})
     elif key in _SETTABLE_FIELDS:
         config = config.model_copy(update={key: value})
     else:
-        all_keys = ", ".join(sorted(_SETTABLE_FIELDS | _INT_FIELDS | {"validate_commands"}))
+        all_keys = ", ".join(sorted(_SETTABLE_FIELDS | _INT_FIELDS | _BOOL_FIELDS | {"validate_commands"}))
         _abort(f"Unknown config key '{key}'. Settable: {all_keys}")
 
     save_config(harness_dir, config)

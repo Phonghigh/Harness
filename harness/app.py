@@ -101,6 +101,29 @@ with st.sidebar:
         if not os.environ.get(api_key_var):
             st.warning(f"`{api_key_var}` not set — stub mode only")
 
+        st.subheader("Syntax Executor")
+        from harness.services.claude_executor import is_claude_available as _cc_avail_cfg
+        use_cc_toggle = st.toggle(
+            "Use Claude Code CLI as Syntax Executor",
+            value=config.use_claude_code,
+            help="When enabled, uses `claude -p` to write files directly. Falls back to LLM if `claude` not in PATH.",
+        )
+        cc_timeout_input = st.number_input(
+            "Claude Code Timeout (seconds)",
+            min_value=10,
+            max_value=1800,
+            value=config.claude_code_timeout,
+            step=30,
+            help="How long to wait for Claude Code before timing out.",
+        )
+        if st.button("Save Executor Config"):
+            data = json.loads((harness_dir / "config.json").read_text())
+            data["use_claude_code"] = use_cc_toggle
+            data["claude_code_timeout"] = cc_timeout_input
+            (harness_dir / "config.json").write_text(json.dumps(data, indent=2))
+            st.success("Saved")
+            st.rerun()
+
     st.divider()
 
     page = st.radio(
@@ -329,13 +352,21 @@ elif page == "🩹 Patch":
     # Generate patch
     if task["status"] == "CONTRACT_READY" and patch is None:
         st.info("Contract approved. Ready to generate patch.")
+        from harness.services.claude_executor import is_claude_available
+        if config.use_claude_code and is_claude_available():
+            st.success("⚡ Claude Code mode — files will be written directly to disk")
+        elif config.use_claude_code and not is_claude_available():
+            st.warning("⚠️ use_claude_code=True but `claude` CLI not found in PATH — using LLM fallback")
+        else:
+            st.info("🤖 LLM Syntax Executor mode — generates a .diff file for manual git apply")
         llm = _get_llm(config)
         if llm is None:
             st.warning("No API key — will generate stub patch.")
+        spinner_msg = "Claude Code is implementing..." if (config.use_claude_code and is_claude_available()) else "LLM generating diff..."
         if st.button("⚙️ Generate Patch", type="primary"):
-            with st.spinner("Generating patch..."):
+            with st.spinner(spinner_msg):
                 from harness.services.implementation_service import implement
-                implement(task, c, harness_dir, llm, db)
+                implement(task, c, harness_dir, llm, db, config=config)
             st.rerun()
 
     elif patch is None:
@@ -353,12 +384,23 @@ elif page == "🩹 Patch":
 
         if task["status"] == "WAITING_FOR_PATCH_APPROVAL":
             st.divider()
+            from harness.services.claude_executor import is_claude_available as _cc_avail
+            _use_cc = config.use_claude_code and _cc_avail()
+            button_label = "✅ Approve (files already on disk)" if _use_cc else "✅ Apply Patch"
+            help_text = (
+                "Files were written directly by Claude Code. Approving starts compliance check."
+                if _use_cc
+                else f"Remember to run: git apply .harness/patches/{c['id']}.diff"
+            )
             col_a, col_r = st.columns(2)
             with col_a:
-                if st.button("✅ Apply Patch", type="primary"):
+                if st.button(button_label, type="primary", help=help_text):
                     from harness.services.implementation_service import approve_patch
                     approve_patch(task, db)
-                    st.success("Patch approved → IMPLEMENTING. Run compliance check via CLI.")
+                    if _use_cc:
+                        st.success("Approved. Compliance check will verify the written files.")
+                    else:
+                        st.warning(f"Approved. Apply the patch: `git apply .harness/patches/{c['id']}.diff`")
                     st.rerun()
             with col_r:
                 if st.button("❌ Reject Patch", type="secondary"):

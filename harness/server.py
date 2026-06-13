@@ -239,7 +239,7 @@ def harness_implement(contract_id: str) -> dict:
     Patch saved to .harness/patches/<contract_id>.diff.
     NEVER apply the patch automatically — patch application is always a manual human step.
     """
-    harness_dir, _, db = _ctx()
+    harness_dir, config, db = _ctx()
     task = _active_task()
     if task is None:
         return {"error": "No active task."}
@@ -249,7 +249,7 @@ def harness_implement(contract_id: str) -> dict:
     c = db.get_contract(contract_id.upper())
     if c is None:
         return {"error": f"Contract {contract_id} not found."}
-    result = run_implement(task, dict(c), harness_dir, llm, db)
+    result = run_implement(task, dict(c), harness_dir, llm, db, config=config)
     # Load diff preview from DB
     patch = db.get_patch(result["patch_id"])
     diff_text = patch["diff_text"] if patch else ""

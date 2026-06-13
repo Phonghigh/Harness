@@ -17,6 +17,7 @@ def config():
         project_name="test_project",
         llm_provider="anthropic",
         llm_model="claude-sonnet-4-6",
+        use_claude_code=False,
     )
 
 
