@@ -90,7 +90,12 @@ def run_until_pause(
                     auto_answer_decisions(task, [dict(d) for d in decisions], llm, db)
                     task = dict(db.get_task(task_id))
 
-            decision_ids = [d["id"] for d in db.get_decisions(task_id)]
+            from harness.policy import check_decision_gate
+            refreshed = [dict(d) for d in db.get_decisions(task_id)]
+            decision_ids = [
+                d["id"] for d in refreshed
+                if not check_decision_gate(d.get("category", "")).requires_human
+            ]
             all_approved, conflicts = approve_decisions(decision_ids, task, db)
             if not all_approved:
                 return RuntimeResult(

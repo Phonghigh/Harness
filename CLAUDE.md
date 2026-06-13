@@ -195,9 +195,9 @@ cli.py           ← all services + rich
 
 ### Phase 14 — Policy Engine (optional)
 
-- [ ] harness/policy.py (RiskLevel, PolicyDecision, DECISION_GATES, check_decision_gate, check_patch_risk)
-- [ ] runtime.py: integrate check_decision_gate before auto-approve
-- [ ] **PHASE 14 GATE**
+- [x] harness/policy.py (RiskLevel, PolicyDecision, DECISION_GATES, check_decision_gate, check_patch_risk)
+- [x] runtime.py: integrate check_decision_gate before auto-approve
+- [x] **PHASE 14 GATE**
 
 ### Phase 15 — Claude Code Syntax Executor Integration
 
