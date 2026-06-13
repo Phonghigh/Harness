@@ -79,7 +79,36 @@ def list_decisions(task_id: str, db: Database) -> list:
     return db.get_decisions(task_id)
 
 
-def answer_decision(decision_id: str, answer: str, task: dict, db: Database) -> None:
+def _write_feedback_memory(decision: dict, answer: str, task: dict, db: Database, config) -> None:
+    """Write a feedback memory when human overrides the LLM recommendation."""
+    from harness.services.memory_service import _slugify
+    recommendation = decision.get("recommendation") or ""
+    category = decision.get("category", "")
+    key = _slugify(f"override_{category}_{decision['id']}")
+    now = now_iso()
+    entry = {
+        "id": Database.new_memory_id(),
+        "type": "feedback",
+        "scope": config.project_name if config else "default",
+        "key": key,
+        "value_json": json.dumps({
+            "lesson": f"Human chose '{answer}' over recommended '{recommendation}' for {category}",
+            "context": f"Question: {decision.get('question', '')}. Task: {task.get('title', '')}",
+            "recommendation_rejected": recommendation,
+            "answer_chosen": answer,
+            "decision_category": category,
+        }),
+        "category": category,
+        "source_task_id": task.get("id"),
+        "applied_count": 0,
+        "last_applied_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    db.upsert_memory(entry)
+
+
+def answer_decision(decision_id: str, answer: str, task: dict, db: Database, config=None) -> None:
     assert_command_allowed("answer", TaskStatus(task["status"]))
     dec = db.get_decision(decision_id.upper())
     if dec is None:
@@ -89,6 +118,9 @@ def answer_decision(decision_id: str, answer: str, task: dict, db: Database) -> 
         "status": DecisionStatus.ANSWERED,
         "updated_at": now_iso(),
     })
+    recommendation = dec["recommendation"] or ""
+    if config and recommendation and answer.strip() != recommendation.strip():
+        _write_feedback_memory(dict(dec), answer, task, db, config)
 
 
 def approve_decisions(
@@ -96,6 +128,7 @@ def approve_decisions(
     task: dict,
     db: Database,
     llm=None,
+    config=None,
 ) -> tuple[bool, list[dict]]:
     assert_command_allowed("approve", TaskStatus(task["status"]))
     all_conflicts: list[dict] = []
@@ -115,12 +148,35 @@ def approve_decisions(
         if llm is not None:
             result: ConflictResult = detect_conflicts_llm(dict(dec), memories, llm)
             if result.has_conflict:
-                all_conflicts.append({
+                conflict_entry = {
                     "memory_key": result.conflicting_memory_key or "",
                     "warning": result.explanation or "Conflict detected",
-                })
+                }
+                all_conflicts.append(conflict_entry)
+                if config:
+                    from harness.services.memory_service import write_event_memory
+                    write_event_memory("conflict_override", {
+                        "decision_id": dec["id"],
+                        "category": dec["category"],
+                        "memory_key": result.conflicting_memory_key or "",
+                        "explanation": result.explanation or "",
+                        "task_id": task.get("id"),
+                        "task_title": task.get("title", ""),
+                    }, db, config)
         else:
-            all_conflicts.extend(detect_conflicts_fast(dict(dec), memories))
+            fast_conflicts = detect_conflicts_fast(dict(dec), memories)
+            all_conflicts.extend(fast_conflicts)
+            if fast_conflicts and config:
+                from harness.services.memory_service import write_event_memory
+                for fc in fast_conflicts:
+                    write_event_memory("conflict_override", {
+                        "decision_id": dec["id"],
+                        "category": dec["category"],
+                        "memory_key": fc.get("memory_key", ""),
+                        "explanation": fc.get("warning", ""),
+                        "task_id": task.get("id"),
+                        "task_title": task.get("title", ""),
+                    }, db, config)
 
     pending = db.get_pending_decisions(task["id"])
     if not pending:
@@ -136,7 +192,6 @@ def auto_answer_decisions(task: dict, decisions: list, llm, db: Database) -> lis
     from harness.llm import LLMOutputError, extract_json_block, load_prompt
     from harness.services.memory_service import inject_project_memory
 
-    project_memory = inject_project_memory(db)
     template = load_prompt("decision_answerer")
     parts = template.split("---USER---", 1)
     system = parts[0].strip()
@@ -152,6 +207,7 @@ def auto_answer_decisions(task: dict, decisions: list, llm, db: Database) -> lis
         options_list = "\n".join(f"{i + 1}. {opt}" for i, opt in enumerate(options))
         recommendation = dec["recommendation"] or (options[0] if options else "No recommendation")
 
+        project_memory = inject_project_memory(db, category=dec["category"])
         user = (
             user_template
             .replace("{requirement}", task["raw_requirement"])
@@ -163,11 +219,14 @@ def auto_answer_decisions(task: dict, decisions: list, llm, db: Database) -> lis
         )
 
         selected = recommendation
-        raw = ""
+        rationale: str | None = None
+        confidence: str | None = None
         try:
             raw = extract_json_block(llm.complete(system, user))
             parsed = _DecisionAnswer.model_validate_json(raw)
             selected = parsed.selected_answer
+            rationale = parsed.rationale
+            confidence = parsed.confidence
         except Exception:
             selected = recommendation
 
@@ -176,6 +235,8 @@ def auto_answer_decisions(task: dict, decisions: list, llm, db: Database) -> lis
         if refreshed:
             task = dict(refreshed)
         answer_decision(dec["id"], selected, task, db)
+        if rationale or confidence:
+            db.update_decision(dec["id"], {k: v for k, v in {"rationale": rationale, "confidence": confidence}.items() if v})
         answered.append(dict(db.get_decision(dec["id"])))
 
     return answered

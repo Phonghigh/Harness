@@ -119,6 +119,7 @@ def check_compliance(
     harness_dir: Path,
     llm: LLMAdapter,
     db: Database,
+    config=None,
 ) -> ComplianceReport:
     assert_command_allowed("check", TaskStatus(task["status"]))
     # Defer the CHECKING_COMPLIANCE transition until after the LLM call succeeds,
@@ -167,6 +168,18 @@ def check_compliance(
         "summary": report.summary,
         "created_at": now_iso(),
     })
+
+    if not passed and config:
+        from harness.services.memory_service import write_event_memory
+        for v in all_violations:
+            if v.severity == "error":
+                write_event_memory("compliance_failure", {
+                    "violation_type": str(v.type),
+                    "description": v.description,
+                    "contract_id": contract["id"],
+                    "task_id": task.get("id"),
+                    "task_title": task.get("title", ""),
+                }, db, config)
 
     checking = {"id": task["id"], "status": TaskStatus.CHECKING_COMPLIANCE}
     if passed:

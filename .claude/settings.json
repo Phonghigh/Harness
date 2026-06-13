@@ -18,6 +18,24 @@
       "Bash(.venv/bin/pip install *)",
       "Bash(.venv/bin/python -c \"import pydantic; print\\('pydantic', pydantic.VERSION\\)\")",
       "Bash(.venv/bin/python -c \"from harness.schemas.decision import DECISION_CATEGORIES; print\\('schemas OK, categories:', len\\(DECISION_CATEGORIES\\)\\)\")"
+    ],
+    "ask": [
+      "Bash(npm install *)",
+      "Bash(pnpm add *)",
+      "Bash(yarn add *)",
+      "Bash(git commit *)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(rm -rf *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Edit(**/.env)",
+      "Edit(**/.env.*)",
+      "Read(~/.ssh/**)",
+      "Edit(~/.ssh/**)"
     ]
   },
   "hooks": {

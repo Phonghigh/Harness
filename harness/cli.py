@@ -954,6 +954,47 @@ def memory_delete(memory_id: str) -> None:
         _abort(f"Memory {memory_id.upper()} not found.")
 
 
+@memory_app.command("summary")
+def memory_summary(
+    write: Annotated[bool, typer.Option("--write", help="Write .harness/MEMORY.md")] = False,
+) -> None:
+    """Print a one-line index of all memories grouped by type."""
+    harness_dir, _, db = _get_ctx()
+    from harness.schemas.decision import MEMORY_TYPES
+    rows = db.list_memory()
+
+    if not rows:
+        typer.echo("No memories stored yet.")
+        return
+
+    grouped: dict[str, list] = {t: [] for t in MEMORY_TYPES}
+    grouped["other"] = []
+    for row in rows:
+        bucket = row["type"] if row["type"] in MEMORY_TYPES else "other"
+        grouped[bucket].append(row)
+
+    lines: list[str] = []
+    for mem_type in MEMORY_TYPES + ["other"]:
+        bucket = grouped[mem_type]
+        if not bucket:
+            continue
+        lines.append(f"\n## {mem_type} ({len(bucket)})")
+        for row in bucket:
+            value = json.loads(row["value_json"])
+            lesson = value.get("lesson", str(value))[:70] if isinstance(value, dict) else str(value)[:70]
+            src = row["source_task_id"] or "?"
+            applied = row["applied_count"] if "applied_count" in row.keys() else 0
+            lines.append(f"- [{row['id']}] {row['key']} — {lesson} (from {src}, applied {applied}×)")
+
+    output = "\n".join(lines).strip()
+    typer.echo(output)
+
+    if write:
+        summary_path = harness_dir / "MEMORY.md"
+        summary_path.write_text(output + "\n")
+        typer.echo(f"\nWrote {summary_path}")
+
+
 # ---------------------------------------------------------------------------
 # harness config set
 # ---------------------------------------------------------------------------

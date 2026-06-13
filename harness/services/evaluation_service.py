@@ -90,4 +90,61 @@ def compute_task_evaluation(task: dict, db: Database) -> TaskEvaluation:
         "created_at": now_iso(),
     })
 
+    _write_evaluation_memories(eval_obj, task, db)
     return eval_obj
+
+
+def _write_evaluation_memories(evaluation, task: dict, db: Database) -> None:
+    """Derive and write structured memories from evaluation metrics."""
+    from harness.db import now_iso
+    from harness.services.memory_service import write_event_memory
+
+    class _FakeConfig:
+        project_name: str = task.get("title", "default")[:20]
+
+    config = _FakeConfig()
+    config.project_name = task.get("title", "default")[:20]
+
+    # E1: Missing decision categories → interrogation_pattern memory
+    missing = evaluation.decision_coverage.categories_missing
+    if missing:
+        from harness.db import Database as _DB
+        now = now_iso()
+        entry = {
+            "id": _DB.new_memory_id(),
+            "type": "interrogation_pattern",
+            "scope": config.project_name,
+            "key": f"missed_categories_{task['id']}",
+            "value_json": json.dumps({
+                "lesson": f"Task '{task.get('title', '')[:50]}' did not cover categories: {', '.join(missing)}",
+                "context": "Consider these categories for similar future requirements",
+            }),
+            "category": "implementation_scope",
+            "source_task_id": task.get("id"),
+            "applied_count": 0,
+            "last_applied_at": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        db.upsert_memory(entry)
+
+    # E2: High retry count → compliance_pattern memory
+    if evaluation.compliance.total_retries >= 2:
+        write_event_memory("compliance_failure", {
+            "violation_type": "high_retry_count",
+            "description": (
+                f"Contract for task '{task.get('title', '')}' needed "
+                f"{evaluation.compliance.total_retries} retries — review constraints"
+            ),
+            "contract_id": evaluation.contract_id or "",
+            "task_id": task.get("id"),
+            "task_title": task.get("title", ""),
+        }, db, config)
+
+    # E3: First-pass success → lesson memory
+    if evaluation.compliance.passed_on_first_try:
+        write_event_memory("compliance_success", {
+            "task_id": task.get("id"),
+            "task_title": task.get("title", ""),
+            "category": "implementation_scope",
+        }, db, config)

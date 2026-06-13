@@ -136,6 +136,12 @@ class Database:
             if "decision_ids_json" not in contract_cols:
                 conn.execute("ALTER TABLE contracts ADD COLUMN decision_ids_json TEXT NOT NULL DEFAULT '[]'")
 
+            dec_cols = {r[1] for r in conn.execute("PRAGMA table_info(decisions)").fetchall()}
+            if "rationale" not in dec_cols:
+                conn.execute("ALTER TABLE decisions ADD COLUMN rationale TEXT")
+            if "confidence" not in dec_cols:
+                conn.execute("ALTER TABLE decisions ADD COLUMN confidence TEXT")
+
             mem_cols = {r[1] for r in conn.execute("PRAGMA table_info(memory)").fetchall()}
             if "source_task_id" not in mem_cols:
                 conn.execute("ALTER TABLE memory ADD COLUMN source_task_id TEXT")
@@ -217,10 +223,10 @@ class Database:
             conn.execute(
                 "INSERT INTO decisions"
                 " (id, task_id, category, question, options_json, recommendation,"
-                "  selected_answer, status, created_at, updated_at)"
+                "  selected_answer, rationale, confidence, status, created_at, updated_at)"
                 " VALUES (:id, :task_id, :category, :question, :options_json, :recommendation,"
-                "         :selected_answer, :status, :created_at, :updated_at)",
-                decision,
+                "         :selected_answer, :rationale, :confidence, :status, :created_at, :updated_at)",
+                {**decision, "rationale": decision.get("rationale"), "confidence": decision.get("confidence")},
             )
 
     def get_decisions(self, task_id: str) -> list[sqlite3.Row]:

@@ -3,6 +3,15 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
+MEMORY_TYPES: list[str] = [
+    "project_standard",
+    "architecture_rule",
+    "feedback",
+    "compliance_pattern",
+    "interrogation_pattern",
+    "lesson",
+]
+
 DECISION_CATEGORIES: list[str] = [
     "product_behavior",
     "data_model",
@@ -36,6 +45,8 @@ class Decision(BaseModel):
     options: list[str]
     recommendation: str | None = None
     selected_answer: str | None = None
+    rationale: str | None = None
+    confidence: str | None = None
     status: DecisionStatus = DecisionStatus.PENDING
     created_at: datetime
     updated_at: datetime
